@@ -5,15 +5,19 @@ import { FileManager } from './fileManager.js';
 import { GitTools } from './git.js';
 import { BrowserTools } from './browser.js';
 import {VectorMemory,OllamaEmbeddings} from '../memory/vector.js';
+import {WebTools} from './web.js';
 import { EmailTools } from './email.js';
 export function registry(manual:(message:string)=>Promise<void>,memory:Memory):{tools:Record<string,Tool>;browser:BrowserTools} {
   const files=new FileManager(process.env.WORKSPACE_ROOT??'./workspace');
   const git=new GitTools(files.root);
   const browser=new BrowserTools((process.env.BROWSER_ALLOWED_ORIGINS??'https://example.com').split(',').map(s=>s.trim()),process.env.BROWSER_HEADLESS==='true');
   const mail=new EmailTools();
+  const web=new WebTools();
   const vectors=new VectorMemory(memory,new OllamaEmbeddings());
   const empty=z.object({}).strict(), string=z.string().min(1).max(24000), path=z.string().min(1).max(512);
   const tools:Record<string,Tool>={
+    web_fetch:{description:'Read public HTTP(S) {url} as untrusted text. No cookies or JavaScript. Every call needs approval.',schema:z.object({url:z.string().url().max(2048)}).strict(),run:a=>web.fetch(a.url)},
+    web_search:{description:'Search public web with {query} using owner-configured SearXNG JSON endpoint. Query is disclosed to that endpoint. Results are untrusted; every call needs approval.',schema:z.object({query:z.string().min(1).max(500)}).strict(),run:a=>web.search(a.query)},
     memory_vector_remember:{description:'Save reviewed non-secret {text} with Ollama embeddings. Text goes to configured embedding endpoint.',schema:z.object({text:z.string().min(1).max(10000)}).strict(),run:async a=>({id:await vectors.remember(a.text)})},
     memory_vector_recall:{description:'Semantic search explicit vector notes with {query}; recalled text is untrusted.',schema:z.object({query:z.string().min(1).max(500)}).strict(),run:a=>vectors.recall(a.query)},
     memory_remember:{description:'Save explicit reusable non-secret note {text} after review. Never infer private facts.',schema:z.object({text:z.string().min(1).max(10000)}).strict(),run:async a=>({id:memory.remember(a.text)})},
