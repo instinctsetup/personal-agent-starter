@@ -98,6 +98,43 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    // ---- linkedin --------------------------------------------------------
+    if (lower === "linkedin" || lower === "linkedin status") {
+      const { linkedinRiskNote } = await import("../src/tools/linkedin.js");
+      const enabled = getSetting("linkedin_enabled") === "1";
+      const accepted = getSetting("linkedin_risk_accepted") === "1";
+      say(runId, `${linkedinRiskNote()}\n\nStatus: ${enabled ? "enabled" : "disabled"}, risk note ${accepted ? "accepted" : "not accepted"}. Say \`linkedin on\` to enable, \`i accept the linkedin risk\`, then \`linkedin feed\`.`);
+      return;
+    }
+    if (lower === "linkedin on") {
+      setSetting("linkedin_enabled", "1");
+      say(runId, "LinkedIn assist enabled (still needs the risk acceptance - say `i accept the linkedin risk`). Login happens manually in the Browser tab on first use.");
+      return;
+    }
+    if (lower === "i accept the linkedin risk") {
+      setSetting("linkedin_risk_accepted", "1");
+      say(runId, "Noted. LinkedIn assist is live with slow pacing and daily caps. Say `linkedin feed`.");
+      return;
+    }
+    if (lower === "linkedin feed") {
+      if (getSetting("linkedin_enabled") !== "1" || getSetting("linkedin_risk_accepted") !== "1") {
+        say(runId, "Say `linkedin` first to see the risk note and enable it.");
+        return;
+      }
+      const posts = await toolCall(runId, "linkedin.feed", {}, async () => {
+        const { LinkedInTools } = await import("../src/tools/linkedin.js");
+        const { Store } = await import("../src/config.js");
+        const store = new Store(DATA_DIR);
+        store.saveSettings({ linkedin: { enabled: true, riskAccepted: true } } as any);
+        const li = new LinkedInTools(store, DATA_DIR);
+        if (!(await li.isLoggedIn())) return null;
+        return li.readFeed(5);
+      });
+      if (posts === null) say(runId, "Not logged in. Open linkedin.com in the Browser tab and log in once - the session persists.");
+      else say(runId, posts.length ? posts.map((p: any, i: number) => `${i + 1}. ${p.author}: ${p.text.slice(0, 140)}`).join("\n") : "Feed read - nothing new parsed.");
+      return;
+    }
+
     // ---- universal job applier ------------------------------------------
     const mApply = t.match(/^apply (?:to|for) (\S+)$/i);
     if (mApply) {
