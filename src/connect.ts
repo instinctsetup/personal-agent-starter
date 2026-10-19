@@ -34,7 +34,7 @@ async function readRaw(prompt:string,hidden:boolean):Promise<string>{
   const stdin=process.stdin,stdout=process.stdout;
   if(!stdin.isTTY){
     stdout.write(prompt);
-    return await new Promise<string>(r=>{let s='';const on=(b:Buffer)=>{const t=b.toString('utf8');const i=t.indexOf('\n');if(i>=0){s+=t.slice(0,i);stdin.off('data',on);r(s.trim());}else s+=t;};stdin.on('data',on);stdin.resume();});
+    return await new Promise<string>(r=>{let s='';const on=(b:Buffer)=>{const t=b.toString('utf8');const i=t.indexOf('\n');if(i>=0){s+=t.slice(0,i);stdin.off('data',on);stdin.pause();r(s.trim());}else s+=t;};stdin.on('data',on);stdin.resume();});
   }
   // Raw mode BEFORE writing the prompt, so kernel echo can never race the first typed characters.
   const wasRaw=(stdin as unknown as {isRaw?:boolean}).isRaw??false;
@@ -43,7 +43,7 @@ async function readRaw(prompt:string,hidden:boolean):Promise<string>{
   stdout.write(prompt);
   return await new Promise(resolve=>{
     let out='';
-    const cleanup=()=>{stdin.off('data',onData);stdin.setRawMode(wasRaw);};
+    const cleanup=()=>{stdin.off('data',onData);stdin.setRawMode(wasRaw);stdin.pause();};
     const onData=(b:Buffer)=>{
       for(const ch of b.toString('utf8')){
         if(ch==='\r'||ch==='\n'){cleanup();stdout.write('\n');resolve(out);return;}
