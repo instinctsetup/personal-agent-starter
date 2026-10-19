@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-const DATA_DIR = process.env.AGENT_DATA_DIR || join(process.cwd(), "data");
+export const DATA_DIR = process.env.AGENT_DATA_DIR || join(process.cwd(), "data");
 mkdirSync(DATA_DIR, { recursive: true });
 
 export const db = new Database(join(DATA_DIR, "agent-v2.db"));

@@ -84,7 +84,8 @@ export default function App() {
         {tab === "chat" && <ChatTab events={events} />}
         {tab === "jobs" && <JobsTab />}
         {tab === "vault" && <VaultTab />}
-        {tab !== "chat" && tab !== "jobs" && tab !== "vault" && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
+        {tab === "browser" && <BrowserTab />}
+        {tab !== "chat" && tab !== "jobs" && tab !== "vault" && tab !== "browser" && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
       </main>
     </div>
   );
@@ -295,6 +296,34 @@ function JobsTab() {
 }
 
 /* ================= VAULT ================= */
+function SchedulerSection() {
+  const [jobs, setJobs] = useState<any[]>([]);
+  const load = () => fetch("/api/jobs").then(r => r.json()).then(d => setJobs(d.jobs));
+  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id); }, []);
+  const fmt = (ts: number) => ts >= 9e15 ? "-" : new Date(ts).toLocaleString();
+  return (
+    <section>
+      <h2 className="text-lg font-semibold mb-2">Scheduler</h2>
+      <div className="text-xs text-slate-500 mb-3">Recurring + one-shot jobs. Say <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">every 2 hours search AI internships</code> or <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">at 18:30 tracker</code> in chat.</div>
+      {jobs.filter(j => j.next_ts < 9e15).length === 0 && <div className="text-slate-500 text-sm">No jobs yet.</div>}
+      <div className="space-y-2">
+        {jobs.filter(j => j.next_ts < 9e15).map(j => (
+          <div key={j.id} className="flex items-center gap-3 bg-[#161b22] border border-slate-800 rounded-lg px-3 py-2 text-sm">
+            <div className="flex-1">
+              <div>{j.spec.command}</div>
+              <div className="text-xs text-slate-500">{j.spec.interval_min ? `every ${j.spec.interval_min} min` : "once"} - next {fmt(j.next_ts)}{j.last_run ? ` - last ran ${fmt(j.last_run)}` : ""}</div>
+            </div>
+            <button onClick={async () => { await fetch(`/api/jobs/${j.id}/toggle`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: !j.enabled }) }); load(); }}
+              className={`text-xs px-2 py-1 rounded ${j.enabled ? "bg-emerald-700" : "bg-slate-600"}`}>{j.enabled ? "on" : "paused"}</button>
+            <button onClick={async () => { await fetch(`/api/jobs/${j.id}`, { method: "DELETE" }); load(); }}
+              className="text-xs px-2 py-1 rounded bg-red-900/60 hover:bg-red-800">delete</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function VaultTab() {
   const [entries, setEntries] = useState<any[]>([]);
   const [settings, setSettings] = useState<any>({});
@@ -321,6 +350,87 @@ function VaultTab() {
           <div className="text-xs text-slate-500 mt-1">Switch models by saying <Cmd>connect model</Cmd> in chat.</div>
         </div>
       </section>
+      <SchedulerSection />
+    </div>
+  );
+}
+
+
+function BrowserTab() {
+  const [url, setUrl] = useState("");
+  const [current, setCurrent] = useState<string | null>(null);
+  const [shot, setShot] = useState(0);
+  const [live, setLive] = useState(true);
+  const [control, setControl] = useState(false);
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const typeRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!live) return;
+    const id = setInterval(async () => {
+      setShot(s => s + 1);
+      const st = await fetch("/api/browser/state").then(r => r.json()).catch(() => null);
+      if (st) { setCurrent(st.url); setChallenge(st.challenge); setControl(st.user_control); }
+    }, 1200);
+    return () => clearInterval(id);
+  }, [live]);
+
+  const nav = async () => {
+    if (!url.trim()) return;
+    setBusy(true);
+    await fetch("/api/browser/navigate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: url.trim() }) });
+    setBusy(false); setShot(s => s + 1);
+  };
+
+  const clickImg = async (e: React.MouseEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    const rect = img.getBoundingClientRect();
+    const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
+    const y = Math.round((e.clientY - rect.top) * (800 / rect.height));
+    await fetch("/api/browser/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x, y }) });
+    setTimeout(() => setShot(s => s + 1), 400);
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="p-3 border-b border-slate-800 flex gap-2 items-center">
+        <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && nav()}
+          placeholder="https://…" className="flex-1 bg-[#161b22] border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500" />
+        <button onClick={nav} disabled={busy} className="bg-sky-600 hover:bg-sky-500 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Go</button>
+        <button onClick={async () => { await fetch("/api/browser/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: !control }) }); setControl(!control); }}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold ${control ? "bg-amber-600 hover:bg-amber-500" : "bg-slate-700 hover:bg-slate-600"}`}>
+          {control ? "You are driving" : "Take control"}
+        </button>
+        <button onClick={() => setLive(v => !v)} className="bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-2 text-sm">{live ? "Pause view" : "Resume view"}</button>
+      </div>
+      {challenge && (
+        <div className="px-4 py-2 bg-amber-900/40 border-b border-amber-700 text-amber-200 text-sm">
+          {challenge === "captcha" ? "CAPTCHA detected - click " : "2FA / verification detected - click "}
+          <b>Take control</b> and solve it, then hand control back.
+        </div>
+      )}
+      <div className="flex-1 overflow-auto bg-black/40 flex items-start justify-center p-3">
+        {current || shot > 0 ? (
+          <img key={shot} src={`/api/browser/screenshot?t=${shot}`} onClick={clickImg}
+            className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" alt="live browser" draggable={false} />
+        ) : (
+          <div className="text-slate-500 text-sm mt-20 text-center">
+            Nothing open yet. Enter a URL above, or say <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">open google.com</code> in chat.
+          </div>
+        )}
+      </div>
+      <div className="p-2 border-t border-slate-800 flex gap-2 items-center text-xs text-slate-400">
+        <span className="truncate flex-1">{current || "no page"}</span>
+        <input ref={typeRef} placeholder="Type into page…" onKeyDown={async e => {
+          if (e.key === "Enter" && typeRef.current?.value) {
+            await fetch("/api/browser/type", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: typeRef.current.value }) });
+            typeRef.current.value = ""; setTimeout(() => setShot(s => s + 1), 300);
+          }
+        }} className="w-64 bg-[#161b22] border border-slate-700 rounded px-2 py-1 outline-none focus:border-sky-500" />
+        <button onClick={async () => { await fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "Enter" }) }); setTimeout(() => setShot(s => s + 1), 300); }}
+          className="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Enter</button>
+      </div>
     </div>
   );
 }

@@ -11,6 +11,7 @@ import { handleUserMessage, handleSetupSubmit } from "./agent2.js";
 import { resolveApproval, getApproval } from "./approvals.js";
 import { listApplications, addApplication, updateApplication, deleteApplication, trackerCsv } from "./tracker.js";
 import { listCredentials } from "./vault.js";
+import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
@@ -67,6 +68,12 @@ export async function buildApp() {
   });
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
+  app.get("/api/jobs", async () => ({ jobs: listJobs() }));
+  app.post("/api/jobs/:id/toggle", async (req) => {
+    const { enabled } = req.body as { enabled: boolean };
+    return { ok: setJobEnabled((req.params as any).id, enabled) };
+  });
+  app.delete("/api/jobs/:id", async (req) => ({ ok: deleteJob((req.params as any).id) }));
   app.get("/api/settings", async () => ({
     model: getSetting("model") || "gpt-4o-mini",
     model_base_url: getSetting("model_base_url") || "",
@@ -77,6 +84,46 @@ export async function buildApp() {
     for (const [k, v] of Object.entries(req.body as Record<string, string>)) setSetting(k, v);
     return { ok: true };
   });
+
+
+  // --- live browser ---
+  const br = await import("./browser.js");
+  app.post("/api/browser/navigate", async (req) => {
+    const { url } = req.body as { url: string };
+    const final = await br.navigate(url);
+    return { url: final };
+  });
+  app.get("/api/browser/screenshot", async (_req, reply) => {
+    const buf = await br.screenshot();
+    reply.header("content-type", "image/jpeg").header("cache-control", "no-store");
+    return reply.send(buf);
+  });
+  app.post("/api/browser/click", async (req) => {
+    const { x, y } = req.body as { x: number; y: number };
+    await br.clickAt(x, y);
+    return { ok: true };
+  });
+  app.post("/api/browser/type", async (req) => {
+    const { text } = req.body as { text: string };
+    await br.typeText(text);
+    return { ok: true };
+  });
+  app.post("/api/browser/key", async (req) => {
+    const { key } = req.body as { key: string };
+    await br.pressKey(key);
+    return { ok: true };
+  });
+  app.get("/api/browser/state", async () => ({
+    url: await br.currentUrl(),
+    user_control: br.isUserControlling(),
+    challenge: await br.detectChallenge(),
+  }));
+  app.post("/api/browser/control", async (req) => {
+    const { user } = req.body as { user: boolean };
+    br.setUserControl(Boolean(user));
+    return { ok: true, user_control: br.isUserControlling() };
+  });
+  app.post("/api/browser/close", async () => { await br.closeBrowser(); return { ok: true }; });
 
   const uiDir = join(process.cwd(), "web-v2", "dist");
   if (existsSync(uiDir)) {

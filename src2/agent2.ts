@@ -6,6 +6,7 @@ import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
 import { getSetting, setSetting } from "./db.js";
+import { parseSchedule } from "./scheduler.js";
 import { MockProvider } from "../src/providers/mock.js";
 
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
@@ -86,7 +87,36 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    // ---- scheduler ---------------------------------------------------------
+    const sched = parseSchedule(lower);
+    if (sched) {
+      const job = await toolCall(runId, "scheduler.add", sched, async () => {
+        const { addJob } = await import("./scheduler.js");
+        return addJob(sched.command, sched.nextRun, sched.intervalMin);
+      });
+      say(runId, `Scheduled "${sched.command}" ${sched.intervalMin ? `every ${sched.intervalMin} min` : "once"} - first run ${new Date(sched.nextRun).toLocaleString()}. See the Vault & Scheduler tab.`, { job_id: job.id });
+      return;
+    }
+    if (lower === "jobs" || lower === "schedule") {
+      const { listJobs } = await import("./scheduler.js");
+      const js = listJobs().filter((j) => j.next_ts < Number.MAX_SAFE_INTEGER);
+      say(runId, js.length
+        ? js.map((j) => `- ${j.spec.command} (${j.spec.interval_min ? `every ${j.spec.interval_min} min` : "once"}, next ${new Date(j.next_ts).toLocaleString()})${j.enabled ? "" : " [paused]"}`).join("\n")
+        : "Nothing scheduled. Try `every 2 hours search AI internships` or `at 18:30 tracker`.");
+      return;
+    }
+
     // ---- email send with approval ------------------------------------------
+    const mOpen = t.match(/^(?:open|browse|go to)\s+(\S+)$/i);
+    if (mOpen) {
+      const url = await toolCall(runId, "browser.navigate", { url: mOpen[1] }, async () => {
+        const br = await import("./browser.js");
+        return br.navigate(mOpen[1]);
+      });
+      say(runId, `Opened ${url}. Watch it in the Browser tab - flip "take control" there any time to solve a CAPTCHA or 2FA yourself.`);
+      return;
+    }
+
     const mMail = t.match(/^send (?:an? )?(?:e-?)?mail to (\S+@\S+)(?:[:\s]+(.+))?$/is);
     if (mMail) {
       const payload = { to: mMail[1], subject: "Hello from your agent", body: mMail[2] || "(empty body - edit me)" };
