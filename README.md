@@ -42,6 +42,7 @@ personal-agent-starter/
 | Recall | Explicit non-secret notes with SQLite FTS5 ranked search and deletion |
 | Models | Anthropic, OpenAI, OpenRouter and Ollama over public HTTP APIs |
 | Persistence | SQLite sessions, goals, states, approved calls, ordinary outputs and errors |
+| Public web | Approval-gated fetch to Markdown/text, optional SearXNG JSON search, DNS pinning and bounded output |
 | Browser | Persistent profiles, origin allowlist, 1.5-second action spacing, forms, clicks, Markdown, screenshots |
 | Login | Local env or manual login, CAPTCHA/2FA pause, explicit success selector, auth snapshots |
 | Email | TLS SMTP; exact sender/subject/time-filtered IMAP lookup, latest 10 matches |
@@ -223,6 +224,20 @@ All of this is tested with mocks and local fixtures (see `test/runtime.test.ts`)
 - **Scheduler**: `schedule add "*/15 * * * *" "Asia/Kolkata" "goal"`, `schedule`, `schedule disable ID`. Jobs persist in SQLite, use five-field cron, and missed runs are coalesced into one task. Scheduled tasks still go through the approval queue.
 - **Bot hooks** (`BOT_HOOKS=true` with the daemon): loopback HTTP endpoints `/telegram` and `/slack` on port 8788. Telegram needs the webhook secret header plus allowlisted user and chat IDs. Slack needs a valid signature, fresh timestamp, team ID and allowlisted user and channel. Updates are deduplicated. A message only creates a queued task; it does not approve anything. Put your own HTTPS proxy in front. Env: `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_ALLOWED_CHATS`, `SLACK_SIGNING_SECRET`, `SLACK_TEAM_ID`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`. Outbound send helpers exist in code but are not exposed as agent tools.
 - **Vector memory**: `memory_vector_remember` and `memory_vector_recall` store embeddings from Ollama (`EMBEDDING_MODEL`, default `nomic-embed-text`; `EMBEDDING_BASE_URL`) in SQLite and rank by cosine similarity in process. Fine for small note sets. Note text is sent to the embedding endpoint.
+
+## Public web reading and search
+
+Ask `npm start -- run "Read https://example.com and summarize it"` and approve the exact `web_fetch` URL when shown. The tool returns untrusted Markdown/text with its source URL. Existing Playwright tools handle interactive browsing on allowed origins; this new reader does not run JavaScript, send cookies, log in, submit forms or download binary files.
+
+`web_search` is provider-independent: set `WEB_SEARCH_URL` to a public, trusted **SearXNG JSON search endpoint** (including its search path). It adds URL-encoded `q` and `format=json`. Your instance must permit JSON responses. No default endpoint, API key or paid search service is bundled. Queries go to the configured endpoint; results may enter your configured model. Search is tested with mocked JSON, not a live search instance.
+
+Network limits for these two new tools: credential-free HTTP(S), standard ports, IPv4 only, reserved/private/loopback/link-local ranges blocked, all DNS answers checked and the chosen IP pinned to the socket to avoid DNS rebinding. Each redirect is checked again, at most 3 redirects, no HTTPS downgrade. Total deadline is 15 seconds; responses are limited to 512 KiB and returned text to 20,000 characters. Only HTML, plain text, Markdown and JSON with identity encoding are accepted. No automatic retries or hidden cache. Cached pages can be stale and contain private data, so caching is intentionally not enabled. Both web tools always require exact-call approval, including in daemon mode; local-read policy rules cannot auto-approve them.
+
+Tests cover SSRF URL encodings, mixed DNS answers, pinned lookup, redirects, deadlines, byte limits, content types, Markdown conversion, mocked search and denied approvals. A live `https://example.com` fetch was also checked; this does not establish compatibility with every site. These restrictions apply to the new web tools, **not** to the existing browser/model/email connections. The browser allowlist is not a network sandbox. Stop if a site challenges or throttles you.
+
+## Performance and bounded history
+
+SQLite indexes cover task states, event history, approvals and due jobs. A five-second busy timeout reduces transient lock failures. Model history reads only the latest 40 messages using an indexed query instead of loading every historical event; the original goal is retained in the prompt. The database keeps the full audit history on disk. This is a bounded recent-history window, not AI summarization. No claim of universal speed, automatic cleanup, or production-scale benchmarks is made.
 
 ## Why this exists
 
