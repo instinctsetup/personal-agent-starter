@@ -218,3 +218,12 @@ The model can emit a `plan` decision with up to 12 steps or a `reflect` decision
 ## Deliberate limits
 
 No autonomous daemon, cron scheduler, bot hooks, webhook receiver, vector memory, encrypted vault, distributed queue, automatic side-effect retries, mobile notifications or multi-user dashboard. These need their own security/reliability work. `.env` is not an encrypted vault; SQLite history is not semantic memory. File checks are guardrails, not an OS sandbox. The browser allowlist is not a network firewall. See the security document for the full boundaries.
+
+Okay, here's something more like project content than credits, a short "Why this exists" section:
+
+A) Why this exists: Most AI agents either run unattended or are hard to trust. This starter keeps you in control: it plans a task, shows every action before it runs, and remembers progress between sessions. Meant for learning how agents work and as a base to extend.
+
+B) Roadmap: scheduled jobs, chat bot hooks (Telegram/Slack), vector memory, an encrypted credential vault, more browser tools. Contributions welcome.
+
+C) Motivation: Built to explore how a personal agent can automate browsing, email and code while a human stays in the loop.
+
