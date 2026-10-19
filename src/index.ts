@@ -9,12 +9,12 @@ import { registry } from './tools/registry.js';
 const rl=createInterface({input:stdin,output:stdout});
 const memory=new Memory(process.env.AGENT_DB??'agent_memory.db');
 const manual=async(message:string)=>{console.log(message);await rl.question('Press Enter after completing this step locally. ');};
-const {tools,browser}=registry(manual);
+const {tools,browser}=registry(manual,memory);
 const loop=new AgentLoop(memory,new Router(),tools,async(name,args)=>{
   console.log(`\nREVIEW ${name}\n${JSON.stringify(args,null,2)}`);
   return (await rl.question('Allow this exact call? Type yes: '))==='yes';
 });
-loop.on('step',({decision})=>console.log(decision.type==='tool'?`Next: ${decision.tool}: ${decision.reason}`:decision.message));
+loop.on('step',({decision})=>console.log(decision.type==='tool'?`Next: ${decision.tool}: ${decision.reason}`:decision.type==='plan'?`Plan: ${decision.steps.join(' -> ')}`:decision.type==='reflect'?`Review: ${decision.observation} Next: ${decision.next}`:decision.message));
 loop.on('private-result',result=>console.log('PRIVATE LOCAL RESULT (not sent to model):',result));
 loop.on('result',message=>console.log(message));
 const abort=new AbortController(); process.once('SIGINT',()=>{abort.abort();console.log('Stopping after the active operation.');});
