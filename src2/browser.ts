@@ -18,12 +18,10 @@ export async function ensureBrowser(): Promise<Page> {
     mkdirSync(join(DATA_DIR, "browser-profile"), { recursive: true });
     context = await chromium.launchPersistentContext(join(DATA_DIR, "browser-profile"), {
       headless: true,
-      args: ["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+      // Plain Chromium, no stealth or fingerprint spoofing: default UA, default flags,
+      // no webdriver-property patching. Sites see this exactly as an automated browser.
+      args: ["--no-sandbox"],
       viewport: { width: 1280, height: 800 },
-      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-    });
-    await context.addInitScript(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
     });
     browser = context.browser() as unknown as Browser;
   }

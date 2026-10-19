@@ -110,7 +110,7 @@ Fastify daemon with WebSocket event stream, SQLite (WAL) persistence, AES-256-GC
 human-in-the-loop approval cards, keyless web search (DuckDuckGo → Bing fallback), application tracker,
 and in-chat setup cards. Run: `npm install && npm start` → opens http://127.0.0.1:3090.
 
-Status (as of 2026-10-20): daemon + UI shell + chat/approvals/vault/tracker/search + live Playwright browser tab (screenshot stream, click/type, takeover mode) + persistent scheduler working, 63 tests green. Stack note: spec mentioned Next.js; v2 uses Vite+React SPA + Fastify instead - a deliberate choice for a loopback desktop-style app (no SSR/SEO needed, much lighter build).
+Status (as of 2026-10-20): daemon + UI shell + chat/approvals/vault/tracker/search + live Playwright browser tab (screenshot stream, click/type, takeover mode). The browser is plain Chromium with a persistent profile - no stealth, no anti-bot evasion, no fingerprint spoofing (default user agent, no webdriver patching); CAPTCHAs and 2FA are handed to the human via the takeover mode + persistent scheduler working, 63 tests green. Stack note: spec mentioned Next.js; v2 uses Vite+React SPA + Fastify instead - a deliberate choice for a loopback desktop-style app (no SSR/SEO needed, much lighter build).
 Still building: Playwright live-browser tab, Drive/Docs sync, inbox & cold-mail hub, scheduler UI,
 Telegram/Slack bridge, PDF guide, demo video. Note: keyless search can be rate-limited/blocked on
 datacenter IPs (DuckDuckGo returns 202 challenge); works from normal connections.
