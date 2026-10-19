@@ -43,6 +43,22 @@ await page.waitForTimeout(600);
 await type('help'); await send();
 await waitForText('check mail'); await page.waitForTimeout(1400);
 
+// 1b. memory
+await type('remember that Mahesh prefers Mumbai for internships', 30); await send();
+await waitForText('Remembered (note'); await page.waitForTimeout(900);
+await type('recall mumbai', 35); await send();
+await waitForText('prefers Mumbai'); await page.waitForTimeout(1100);
+
+// 1c. a reminder that fires while we keep working
+await type('remind me in 5 seconds to check the CI run', 30); await send();
+await waitForText('Reminder set'); await page.waitForTimeout(800);
+
+// 1d. workspace files
+await type('write file todo.txt: follow up with recruiters', 25); await send();
+await waitForText('Wrote todo.txt'); await page.waitForTimeout(700);
+await type('read file todo.txt', 30); await send();
+await waitForText('follow up with recruiters'); await page.waitForTimeout(900);
+
 // 2. apply from a link (local fixture stands in for a real posting)
 await type(`apply ${fixtureUrl}`, 35); await send();
 await waitForText('I need these facts', 60000); await page.waitForTimeout(800);
@@ -62,6 +78,10 @@ await waitForText('submitted', 60000); await page.waitForTimeout(1500);
 // 3. applications log
 await page.locator('[data-view="applications"]').click();
 await page.waitForTimeout(1800);
+
+// 3b. back to chat - the reminder has fired by now
+await page.locator('[data-view="chat"]').click();
+await waitForText('Reminder: check the CI run', 45000); await page.waitForTimeout(1600);
 
 // 4. settings
 await page.locator('[data-view="settings"]').click();

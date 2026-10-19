@@ -26,6 +26,10 @@ Requires [Node.js 22+](https://nodejs.org). The first run installs dependencies 
 | Read Telegram channels | GramJS user client, channels you configure, one-time login in chat | **not live-verified** |
 | Apply from a link | Playwright fills the form strictly from your saved profile, asks for gaps, confirms before submit, logs every attempt | tested end-to-end against a local fixture form |
 | LinkedIn assist | Opt-in. Your own logged-in session in a persistent browser profile: feed reading, Easy Apply, messages, connection invites | guardrails unit-tested; **not live-verified** |
+| Memory | "remember ..." / "recall" / "forget" notes, plain-text, secret-guarded | tested |
+| Reminders | Natural times ("in 30 minutes", "at 6pm", "tomorrow"), delivered in chat | tested |
+| Workspace files | List/read/write/append inside a confined folder | tested |
+| Plugins | Drop-in .mjs commands in plugins/ | tested |
 
 ## Safety model
 
@@ -56,7 +60,7 @@ src/
     linkedin.ts          # opt-in LinkedIn assist with pacing caps
     profile.ts           # form-answer profile + field matching
 web/                     # chat UI, setup wizard, settings, application log
-test/                    # 42 offline tests, incl. a full Playwright apply flow
+test/                    # 48 offline tests, incl. a full Playwright apply flow
 scripts/                 # doctor, PDF guide builder, demo recorder
 ```
 
@@ -71,6 +75,9 @@ applications                               # your application log
 telegram channels · telegram status
 linkedin login · linkedin feed · linkedin status
 linkedin apply <url> · linkedin message <url>: hi · linkedin invite <url>: note
+remember that ... · recall <topic> · notes · forget <id>
+remind me in 30 minutes to ... · remind me at 6pm to ... · reminders
+list files · read file X · write file X: ... · append file X: ... · plugins
 ```
 
 Anything else goes to the model provider as chat. With the offline mock provider every command above still works except free-form conversation.

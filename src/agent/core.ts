@@ -306,13 +306,13 @@ export class AgentCore {
         const parsed = parseReminder(intent.raw);
         if (!parsed) return this.say(source, 'I could not find a time in that. Try "remind me in 30 minutes to ..." or "remind me at 6pm to ...".').text;
         const r = this.reminders.add(parsed.text, parsed.dueAt);
-        return this.say(source, `Reminder set for ${r.dueAt.slice(0, 16).replace('T', ' ')}: ${r.text}`).text;
+        return this.say(source, `Reminder set for ${fmtLocal(r.dueAt)}: ${r.text}`).text;
       }
 
       case 'reminders': {
         const pending = this.reminders.pending();
         if (pending.length === 0) return this.say(source, 'No pending reminders.').text;
-        return this.say(source, pending.map((r) => `- ${r.dueAt.slice(0, 16).replace('T', ' ')}: ${r.text}`).join('\n')).text;
+        return this.say(source, pending.map((r) => `- ${fmtLocal(r.dueAt)}: ${r.text}`).join('\n')).text;
       }
 
       case 'files.list': {
@@ -433,6 +433,10 @@ export function parseAnswers(questions: string[], text: string): Record<string, 
     }
   }
   return answers;
+}
+
+export function fmtLocal(iso: string): string {
+  return new Date(iso).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }
 
 function stoppedMessage(err: unknown): string {
