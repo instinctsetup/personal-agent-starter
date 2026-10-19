@@ -1,20 +1,7 @@
 node_modules/
 dist/
-.env
-.env.*
-!.env.example
-.browser_profiles/
-playwright/.auth/
-*.db
-*.db-*
-*.sqlite*
-state.json
-.auth/
-artifacts/
-workspace/
+data/
 *.log
-*.pem
-*.key
-
-# Runtime lock
-agent_memory.db.lock
+.DS_Store
+assets/demo.mp4
+assets/demo-raw/

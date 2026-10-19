@@ -1,34 +1,32 @@
 {
-  "name": "personal-agent-starter",
-  "version": "0.1.0",
+  "name": "personal-agent",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=22.13"
-  },
+  "description": "Local-first personal agent with a web chat UI: mail, Telegram, job applications and LinkedIn assist.",
+  "engines": { "node": ">=22.13" },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "tsx src/index.ts",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
     "test": "tsx --test test/*.test.ts",
-    "setup": "node scripts/setup.mjs",
-    "doctor": "node scripts/doctor.mjs"
+    "doctor": "node scripts/doctor.mjs",
+    "guide": "node scripts/make-guide.mjs",
+    "demo": "node scripts/record-demo.mjs"
   },
   "dependencies": {
-    "cron-parser": "^5.10.2",
     "dotenv": "^16.4.7",
     "imapflow": "^1.0.181",
     "mailparser": "^3.7.2",
     "nodemailer": "^10.1.7",
     "playwright": "^1.51.0",
-    "turndown": "^7.2.0",
+    "telegram": "^2.26.22",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/mailparser": "^3.4.5",
     "@types/node": "^22.13.10",
     "@types/nodemailer": "^8.0.2",
-    "@types/turndown": "^5.0.5",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2"
   }

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Personal Agent</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">Personal Agent</div>
+    <nav>
+      <button class="nav-btn active" data-view="chat">Chat</button>
+      <button class="nav-btn" data-view="applications">Applications</button>
+      <button class="nav-btn" data-view="settings">Settings</button>
+    </nav>
+    <div id="status-list"></div>
+  </aside>
+
+  <main>
+    <section id="view-chat" class="view active">
+      <div id="messages"></div>
+      <form id="composer">
+        <input id="composer-input" type="text" placeholder="Message your agent... (try &quot;help&quot;)" autocomplete="off">
+        <button type="submit" id="send-btn" title="Send">&#10148;</button>
+      </form>
+    </section>
+
+    <section id="view-applications" class="view">
+      <h2>Application log</h2>
+      <p class="muted">Every application attempt lands here - submitted, cancelled or failed.</p>
+      <div id="applications-list"></div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <h2>Settings</h2>
+      <div id="settings-form"></div>
+    </section>
+  </main>
+</div>
+
+<div id="wizard" class="modal hidden">
+  <div class="modal-card">
+    <h2>Welcome - quick setup</h2>
+    <p class="muted">Everything stays on this machine. Secrets are stored locally in a private file (mode 600) and never logged. You can skip any step and do it later in Settings.</p>
+    <div id="wizard-steps"></div>
+    <div class="wizard-nav">
+      <button id="wizard-skip" class="ghost">Skip for now</button>
+      <button id="wizard-next" class="primary">Next</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
