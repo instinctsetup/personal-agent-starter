@@ -88,7 +88,9 @@ vault  /  help
 npm test    # 79 tests: v1 core + v2 vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail
 ```
 
-## v1 (branch `main`)
+## v1 (tag `v1.0`)
 
-The original CLI + vanilla-web starter remains on `main`: Express-less server,
-agent core, mail/apply/linkedin/profile/telegram tools, 48 tests.
+The original starter (Express-less server, vanilla-web chat, agent core,
+mail/apply/linkedin/profile/telegram tools, 48 tests) is preserved at tag `v1.0`.
+v1 demo video: https://drive.google.com/file/d/1ABEXE6dvq6-Rh2-AxJGjgUGeWTDK-1i7/view -
+v1 guide: https://drive.google.com/file/d/1vw5o4Z0GnoyS8c2ccwlW5G1pd7a6U15D/view

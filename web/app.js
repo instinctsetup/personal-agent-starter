@@ -96,14 +96,32 @@ async function poll(force) {
   } catch { /* server may be restarting */ }
 }
 
-$('#composer').addEventListener('submit', async (ev) => {
-  ev.preventDefault();
+async function sendComposer() {
   const input = $('#composer-input');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
+  input.style.height = 'auto';
   await api('/api/chat', { method: 'POST', body: { text } });
   await poll(true);
+}
+
+$('#composer').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  await sendComposer();
+});
+
+$('#composer-input').addEventListener('keydown', async (ev) => {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    await sendComposer();
+  }
+});
+
+$('#composer-input').addEventListener('input', (ev) => {
+  const el = ev.target;
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
 });
 
 // ---------- status ----------
