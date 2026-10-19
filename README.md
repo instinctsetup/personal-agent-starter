@@ -1,3 +1,4 @@
+
 <p align="center"><img src="assets/banner.svg" alt="Personal Agent: local first, human reviewed" width="100%"></p>
 
 <p align="center"><b>A TypeScript personal-assistant workspace you run and review yourself.</b><br>Natural-language tasks, persistent progress and tools you control.</p>
