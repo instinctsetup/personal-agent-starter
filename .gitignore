@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.browser_profiles/
+playwright/.auth/
+*.db
+*.db-*
+*.sqlite*
+state.json
+.auth/
+artifacts/
+workspace/
+*.log
+*.pem
+*.key
