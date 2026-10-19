@@ -42,6 +42,26 @@ export async function handleUserMessage(text: string): Promise<void> {
   const lower = t.toLowerCase();
 
   try {
+    if (lower === "help" || lower === "commands") {
+      say(runId, [
+        "What I understand:",
+        "- connect <model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
+        "- search <query> - keyless web search (DuckDuckGo, then Bing)",
+        "- open / browse <url> - drive the live browser (Browser tab)",
+        "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
+        "- apply to <job-url> - fill profile facts only, approval before submit",
+        "- track <Company> - <role> / applications - application tracker",
+        "- send mail to <addr>: <body> - drafts, you approve before sending",
+        "- inbox / check mail - read recent mail",
+        "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
+        "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
+        "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
+        "- linkedin / linkedin on / linkedin feed - LinkedIn assist (risk-gated)",
+        "- vault - list stored credentials (secrets never shown)",
+      ].join("\n"));
+      return;
+    }
+
     // ---- setup cards ------------------------------------------------------
     const connect = lower.match(/^connect (\w[\w -]*)$/) || lower.match(/^set model key$/);
     if (connect) {
