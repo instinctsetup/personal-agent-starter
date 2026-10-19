@@ -3,13 +3,14 @@
 // local fixture job form, then compresses it under 16 MB for sharing.
 // Run: npm run build && node scripts/record-demo.mjs
 import { chromium } from 'playwright';
-import { mkdtempSync, writeFileSync, mkdirSync, readdirSync, statSync, renameSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'pa-demo-data-'));
 writeFileSync(join(dataDir, 'resume.pdf'), '%PDF-1.4 demo resume');
+rmSync('assets/demo-raw', { recursive: true, force: true });
 mkdirSync('assets/demo-raw', { recursive: true });
 
 const { startServer } = await import('../dist/server.js');
