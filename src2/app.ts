@@ -13,6 +13,7 @@ import { listApplications, addApplication, updateApplication, deleteApplication,
 import { listCredentials } from "./vault.js";
 import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
 import { listInbox, mailConfigured } from "./mail.js";
+import { listSignups } from "./signup.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
@@ -70,6 +71,7 @@ export async function buildApp() {
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
   app.get("/api/jobs", async () => ({ jobs: listJobs() }));
+  app.get("/api/signups", async () => ({ signups: listSignups() }));
   app.get("/api/mail/inbox", async () => {
     if (!mailConfigured()) return { configured: false, messages: [] };
     try { return { configured: true, messages: await listInbox() }; }

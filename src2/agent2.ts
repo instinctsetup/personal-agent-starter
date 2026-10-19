@@ -98,6 +98,32 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    // ---- signup engine -------------------------------------------------
+    const mSignup = t.match(/^sign ?up (?:on|at|for) (\S+)(?: with google)?$/i);
+    if (mSignup) {
+      const site = mSignup[1];
+      const status = await toolCall(runId, "signup.google", { site }, async () => {
+        const { signupWithGoogle } = await import("./signup.js");
+        return signupWithGoogle(runId, site);
+      });
+      const msg: Record<string, string> = {
+        completed: `Signed up on ${site}.`,
+        pending_verification: `Signup on ${site} started - watch the Browser tab. If a code arrives by email, say \`finish signup ${site}\`.`,
+        needs_human: `I hit a wall on ${site}. Take control in the Browser tab, finish the step, then tell me to continue.`,
+        failed: `Couldn't find a Google sign-up option on ${site}. The Browser tab shows what I saw.`,
+      };
+      say(runId, msg[status as string] || `Signup on ${site}: ${status}`);
+      return;
+    }
+    if (lower === "signups") {
+      const { listSignups } = await import("./signup.js");
+      const rows = listSignups();
+      say(runId, rows.length
+        ? rows.map((r: any) => `- ${r.site} via ${r.method}: ${r.status} (${new Date(r.ts).toLocaleString()})`).join("\n")
+        : "No signups yet. Try `sign up on example.com with google`.");
+      return;
+    }
+
     // ---- scheduler ---------------------------------------------------------
     const sched = parseSchedule(lower);
     if (sched) {
