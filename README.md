@@ -2,7 +2,7 @@
 
 A local-first personal assistant with a real app experience: a polished web chat UI, one-command setup, and an in-app setup wizard. Chat with it like WhatsApp/ChatGPT - it reads and summarizes your mail, sends mail you approve, talks to you on Telegram, reads your Telegram channels, fills out job applications from a pasted link, and helps on LinkedIn (opt-in, careful pacing). Everything runs on your machine; secrets stay local.
 
-**[Demo video (Google Drive)](https://drive.google.com/file/d/1cHcbroXohBETp57lRcz3Rx2KxxkQk87I/view)** · **[PDF usage guide (Google Drive)](https://drive.google.com/file/d/1v1c_GqEgCiXMpNokTqmPYy-6tu565K3n/view)** · local copy: [`docs/Personal-Agent-Guide.pdf`](docs/Personal-Agent-Guide.pdf)
+**[Demo video (Google Drive)](https://drive.google.com/file/d/1T6u8L944nnEZeSF-ovZszrgfYgcrZljW/view)** · **[PDF usage guide (Google Drive)](https://drive.google.com/file/d/1vw5o4Z0GnoyS8c2ccwlW5G1pd7a6U15D/view)** · local copy: [`docs/Personal-Agent-Guide.pdf`](docs/Personal-Agent-Guide.pdf)
 
 ## Quickstart
 
