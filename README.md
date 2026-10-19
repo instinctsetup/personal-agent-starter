@@ -53,6 +53,7 @@ personal-agent-starter/
 | Files | Workspace-confined paths, 500-line chunks, create without overwrite, exact-match patch |
 | Git | Init, branch, status, explicit-file Conventional Commits, GitHub push, optional Git LFS |
 | Developer UX | Setup wizard, doctor, read-only neon dashboard, Dockerfile and CI definition |
+| Guided services | Conversational `connect` setup for email, Telegram and Slack; secrets typed hidden, stored locally with 600 permissions |
 
 This is a supervised developer starter, not an unattended production service. No product-parity claim is made. Only connect accounts after reading [Security](docs/SECURITY.md).
 
@@ -129,6 +130,16 @@ An active headless session cannot hot-switch to headful; restart first. `save_st
 ### LinkedIn and other logged-in sites
 
 Generic browser tools can open allowed authenticated sites, but this is not a LinkedIn-specific integration. Sites can restrict automation, flag sessions or suspend accounts. The 1.5-second action spacing is only a basic throttle, not a safe-use guarantee. Prefer official APIs/manual use; stop on challenges or throttling. No stealth, anti-detection or CAPTCHA-bypass features are included.
+
+## Guided service setup
+
+```bash
+npm start -- connect email      # Gmail/SMTP: address, app password (hidden), host, port, optional test mail
+npm start -- connect telegram   # Bot token (hidden, verified with getMe when reachable) + chat allowlist
+npm start -- connect slack      # Signing secret (hidden) + team/channel/user allowlist
+```
+
+Secrets are typed with hidden input, written only to the local `.env` with owner-only (600) permissions, and are never echoed or logged. Gmail needs 2FA and an App Password (Google Account -> Security -> App passwords), not your normal password. The test mail proves plain-English sending ("send mail to X saying ...") which still requires your exact approval per send. Telegram token verification calls the public getMe API; Slack secrets are stored without a live check. Only the env writing and validation are covered by automated tests; live sends to real providers are not tested.
 
 ## Email
 

@@ -11,6 +11,7 @@ import { AgentLoop } from './agent/loop.js';
 import {Reminders} from './runtime/reminders.js';
 import {compactTask} from './memory/compact.js';
 import {checkConfig} from './config.js';
+import {connectEmail,connectTelegram,connectSlack,readHidden,type IO} from './connect.js';
 import {loadPlugins} from './tools/plugins.js';
 import {COMMAND_WARNING} from './tools/shell.js';
 import { registry } from './tools/registry.js';
@@ -73,6 +74,14 @@ try {
     else console.log(reminders.list());
   }
   else if(command==='notifications'){const n=reminders.fire().length;const u=reminders.unseen();console.log(u.length?u.map(x=>`${x.created_at} ${x.message}`).join('\n'):'No new notifications');if(args[0]==='clear')reminders.markSeen();void n;}
+  else if(command==='connect'){
+    const service=args[0];
+    const io:IO={ask:(q:string)=>rl.question(q),askHidden:readHidden,print:(s:string)=>console.log(s)};
+    if(service==='email')await connectEmail(io);
+    else if(service==='telegram')await connectTelegram(io);
+    else if(service==='slack')await connectSlack(io);
+    else throw new Error('Usage: connect email|telegram|slack');
+  }
   else if(command==='compact'){if(!args[0])throw new Error('Provide task ID');console.log(await compactTask(memory,new Router(),args[0]));}
   else if(command==='config'){const r=checkConfig(process.env);for(const x of r)console.log(`${x.level.toUpperCase()}: ${x.message}`);if(r.some(x=>x.level==='error'))process.exitCode=1;}
   else if(command==='enqueue'){const goal=args.join(' ').trim();if(!goal)throw new Error('Provide goal');console.log(memory.create(goal));}
@@ -81,6 +90,6 @@ try {
   else if(command==='status') {console.log(args[0]?memory.task(args[0]):memory.db.prepare('SELECT id,status,steps,goal FROM tasks ORDER BY rowid DESC LIMIT 20').all());}
   else if(command==='login') {const [url,successSelector]=args;if(!url||!successSelector)throw new Error('Usage: login URL SUCCESS_SELECTOR');await browser.start();await browser.login_to_site({url,userSelector:'input[type=email]',passwordSelector:'input[type=password]',submitSelector:'button[type=submit]',successSelector},manual);}
   else if(command==='serve') {const { serve }=await import('./server.js');const server=await serve(memory);console.log(`Read-only dashboard: http://127.0.0.1:${(server.address() as any).port}`);await new Promise<void>(resolve=>{const timer=setInterval(()=>{if(abort.signal.aborted){clearInterval(timer);server.close(()=>resolve());}},250);});}
-  else console.log('Commands: run "goal" | resume TASK_ID | status [TASK_ID] | login URL SUCCESS_SELECTOR | serve | daemon | enqueue "goal" | approvals | approve ID | deny ID | schedule [add/disable] | remind [add ISO "text"|cancel ID] | notifications [clear] | compact TASK_ID | config');
+  else console.log('Commands: run "goal" | resume TASK_ID | status [TASK_ID] | login URL SUCCESS_SELECTOR | serve | daemon | enqueue "goal" | approvals | approve ID | deny ID | schedule [add/disable] | remind [add ISO "text"|cancel ID] | notifications [clear] | compact TASK_ID | config | connect email|telegram|slack');
 } catch(error) {console.error(error instanceof Error?error.message:'Execution failed');process.exitCode=1;}
 finally {if(hooks)await new Promise<void>(resolve=>hooks!.close(()=>resolve()));await browser.close();memory.close();rl.close();await releaseLock?.();}
