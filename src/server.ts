@@ -52,6 +52,8 @@ export function buildApp(dataDir = join(process.cwd(), 'data')): AppContext {
   });
 
   startBotIfConfigured(ctx);
+  const reminderTimer = setInterval(() => ctx.core.checkReminders(), 15_000);
+  reminderTimer.unref();
   return ctx;
 }
 

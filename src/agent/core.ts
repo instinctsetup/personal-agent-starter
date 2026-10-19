@@ -9,6 +9,10 @@ import { LinkedInTools, LinkedInStopped, linkedinRiskNote } from '../tools/linke
 import { runJobApplication, logApplication, readApplicationLog } from '../tools/apply.js';
 import { ProfileStore, PROFILE_LABELS, type Profile } from '../tools/profile.js';
 import { parseIntent } from './intents.js';
+import { NotesStore, looksSecret } from '../tools/notes.js';
+import { ReminderStore, parseReminder } from '../tools/reminders.js';
+import { FileTools } from '../tools/files.js';
+import { PluginRegistry } from '../tools/plugins.js';
 import { PendingManager } from './pending.js';
 import { History, type ChatEntry } from './history.js';
 import { log } from '../util/log.js';
@@ -34,12 +38,20 @@ const HELP = `Here's what I can do:
 - "linkedin apply <url>" - Easy Apply, confirm before submit
 - "linkedin message <url>: <text>" / "linkedin invite <url>[: note]" - always confirmed first
 - "linkedin login" - open the LinkedIn browser so you can log in once
+- "remember ..." / "recall <topic>" / "notes" / "forget <id>" - long-term memory
+- "remind me in 30 minutes to ..." / "remind me at 6pm to ..." / "reminders"
+- "list files" / "read file X" / "write file X: ..." / "append file X: ..." - your workspace folder
+- "plugins" - list loaded plugin commands
 Anything else is just chat.`;
 
 export class AgentCore {
   readonly pending = new PendingManager();
   readonly history: History;
   readonly profiles: ProfileStore;
+  readonly notes: NotesStore;
+  readonly reminders: ReminderStore;
+  readonly files: FileTools;
+  readonly plugins: PluginRegistry;
   private notifier: Notifier = () => {};
   private botState: 'off' | 'starting' | 'on' | 'error' = 'off';
 
@@ -52,6 +64,21 @@ export class AgentCore {
   ) {
     this.history = new History(dir);
     this.profiles = new ProfileStore(dir);
+    this.notes = new NotesStore(dir);
+    this.reminders = new ReminderStore(dir);
+    this.files = new FileTools(dir);
+    this.plugins = new PluginRegistry(join(process.cwd(), 'plugins'));
+    void this.plugins.load();
+  }
+
+  /** Delivers due reminders into the chat; called by the server's scheduler. */
+  checkReminders(): number {
+    const due = this.reminders.due();
+    for (const r of due) {
+      this.say({ kind: 'web' }, `Reminder: ${r.text}`);
+      this.reminders.markDone(r.id);
+    }
+    return due.length;
   }
 
   setNotifier(n: Notifier): void {
@@ -250,8 +277,69 @@ export class AgentCore {
         return this.say(source, lines.join('\n')).text;
       }
 
+      case 'remember': {
+        if (looksSecret(intent.text)) {
+          return this.say(source, "That looks like a secret, so I won't store it in notes - notes are plain text on disk. Keep secrets in a password manager.").text;
+        }
+        const n = this.notes.add(intent.text);
+        return this.say(source, `Remembered (note ${n.id}).`).text;
+      }
+
+      case 'recall': {
+        const hits = this.notes.search(intent.query);
+        if (hits.length === 0) return this.say(source, `Nothing in my notes about "${intent.query}".`).text;
+        return this.say(source, hits.map((n) => `- [${n.id}] ${n.text}`).join('\n')).text;
+      }
+
+      case 'notes': {
+        const all = this.notes.all();
+        if (all.length === 0) return this.say(source, 'No notes yet. Say "remember ..." to add one.').text;
+        return this.say(source, all.map((n) => `- [${n.id}] ${n.text}`).join('\n')).text;
+      }
+
+      case 'forget': {
+        const removed = this.notes.remove(intent.id);
+        return this.say(source, removed ? `Forgot note ${removed.id}.` : `No note with id ${intent.id}.`).text;
+      }
+
+      case 'remind': {
+        const parsed = parseReminder(intent.raw);
+        if (!parsed) return this.say(source, 'I could not find a time in that. Try "remind me in 30 minutes to ..." or "remind me at 6pm to ...".').text;
+        const r = this.reminders.add(parsed.text, parsed.dueAt);
+        return this.say(source, `Reminder set for ${r.dueAt.slice(0, 16).replace('T', ' ')}: ${r.text}`).text;
+      }
+
+      case 'reminders': {
+        const pending = this.reminders.pending();
+        if (pending.length === 0) return this.say(source, 'No pending reminders.').text;
+        return this.say(source, pending.map((r) => `- ${r.dueAt.slice(0, 16).replace('T', ' ')}: ${r.text}`).join('\n')).text;
+      }
+
+      case 'files.list': {
+        const list = this.files.list();
+        if (list.length === 0) return this.say(source, 'Workspace is empty. Try "write file hello.txt: hi".').text;
+        return this.say(source, list.map((f) => `- ${f.name} (${f.size} bytes)`).join('\n')).text;
+      }
+
+      case 'files.read':
+        return this.guarded(source, async () => this.files.read(intent.name2));
+
+      case 'files.write':
+        return this.guarded(source, async () => `Wrote ${this.files.write(intent.name2, intent.content)}.`);
+
+      case 'files.append':
+        return this.guarded(source, async () => `Appended to ${this.files.append(intent.name2, intent.content)}.`);
+
+      case 'plugins': {
+        const list = this.plugins.list();
+        if (list.length === 0) return this.say(source, 'No plugins loaded. Drop an .mjs file into the plugins/ folder - see plugins/hello.example.mjs.').text;
+        return this.say(source, list.map((p) => `- ${p.name}: ${p.help.join('; ')}`).join('\n')).text;
+      }
+
       case 'chat':
       default: {
+        const pluginReply = await this.plugins.run(text, this.store).catch(() => undefined);
+        if (pluginReply !== undefined) return this.say(source, pluginReply).text;
         const provider = this.provider();
         const recent = this.history.recent(20).map((e) => ({ role: e.role, content: e.text }));
         try {

@@ -8,6 +8,17 @@ export type Intent =
   | { name: 'mail.send' } // guided question flow collects to/subject/body
   | { name: 'apply'; url: string }
   | { name: 'applications' }
+  | { name: 'remember'; text: string }
+  | { name: 'recall'; query: string }
+  | { name: 'forget'; id: string }
+  | { name: 'notes' }
+  | { name: 'remind'; raw: string }
+  | { name: 'reminders' }
+  | { name: 'files.list' }
+  | { name: 'files.read'; name2: string }
+  | { name: 'files.write'; name2: string; content: string }
+  | { name: 'files.append'; name2: string; content: string }
+  | { name: 'plugins' }
   | { name: 'telegram.channels' }
   | { name: 'telegram.status' }
   | { name: 'linkedin.feed' }
@@ -69,6 +80,26 @@ export function parseIntent(raw: string): Intent {
   }
 
   if (/application(s)? (log|history|status)|what did you apply|my applications/.test(lower)) return { name: 'applications' };
+
+  const rem = text.match(/^remember(?: that)?\s+(.+)$/is);
+  if (rem) return { name: 'remember', text: rem[1].trim() };
+  const rec = lower.match(/^(?:recall|what do you (?:know|remember) about)\s+(.+)/);
+  if (rec) return { name: 'recall', query: rec[1].trim() };
+  const forg = lower.match(/^forget\s+(?:note\s+)?([a-z0-9-]+)/);
+  if (forg) return { name: 'forget', id: forg[1] };
+  if (/^(notes|my notes|list notes)\b/.test(lower)) return { name: 'notes' };
+
+  if (/^remind(er)? me\b/.test(lower) || /^remind me\b/.test(lower)) return { name: 'remind', raw: text };
+  if (/^(reminders|my reminders|list reminders)\b/.test(lower)) return { name: 'reminders' };
+
+  if (/^(list |show )?(workspace )?files\b/.test(lower)) return { name: 'files.list' };
+  const fr = text.match(/^(?:read|show|open) (?:file )?([\w.\-/]+)$/i);
+  if (fr && /file|read|show|open/i.test(lower)) return { name: 'files.read', name2: fr[1] };
+  const fw = text.match(/^(?:write|create|save) (?:file )?([\w.\-/]+)\s*:\s*([\s\S]+)$/i);
+  if (fw) return { name: 'files.write', name2: fw[1], content: fw[2] };
+  const fa = text.match(/^append (?:to )?(?:file )?([\w.\-/]+)\s*:\s*([\s\S]+)$/i);
+  if (fa) return { name: 'files.append', name2: fa[1], content: fa[2] };
+  if (/^plugins\b/.test(lower)) return { name: 'plugins' };
 
   return { name: 'chat', text };
 }
