@@ -98,6 +98,57 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    // ---- git engine ------------------------------------------------------
+    const mGitInit = t.match(/^(?:git init|new repo)(?:\s+(\S+))?$/i);
+    if (mGitInit) {
+      const name = (mGitInit[1] || "new-project").replace(/[^\w.-]/g, "-");
+      const path = `${process.env.HOME || "."}/repos/${name}`;
+      const r = await toolCall(runId, "git.init", { name }, async () => {
+        const { initRepo } = await import("./git.js");
+        return initRepo(path, name);
+      });
+      say(runId, `Repo ${r.created ? "created" : "already existed"} at ${r.path}.`);
+      return;
+    }
+    const mCommit = t.match(/^commit (\S+)(?:\s+(.+))?$/i);
+    if (mCommit) {
+      const path = mCommit[1];
+      const msg = mCommit[2] || "agent: checkpoint";
+      const r = await toolCall(runId, "git.commit", { path, msg }, async () => {
+        const { commitAll } = await import("./git.js");
+        return commitAll(path, msg);
+      });
+      say(runId, r ? `Committed: ${r}` : "Nothing to commit - working tree clean.");
+      return;
+    }
+    const mPush = t.match(/^push (\S+)(?:\s+(\S+))?(?:\s+(\S+))?$/i);
+    if (mPush) {
+      const path = mPush[1];
+      const remote = mPush[2] || "origin";
+      const branch = mPush[3] || "main";
+      await toolCall(runId, "git.push", { path, remote, branch }, async () => {
+        const { push } = await import("./git.js");
+        return push(path, remote, branch);
+      });
+      say(runId, `Pushed ${branch} to ${remote}.`);
+      return;
+    }
+    const mGhRepo = t.match(/^(?:create|make) (?:a )?github repo (\S+)$/i);
+    if (mGhRepo) {
+      const url = await toolCall(runId, "github.create_repo", { name: mGhRepo[1] }, async () => {
+        const { createGithubRepo } = await import("./git.js");
+        return createGithubRepo(mGhRepo[1]);
+      });
+      say(runId, `Created: ${url}`);
+      return;
+    }
+    if (lower.startsWith("git status ")) {
+      const path = t.slice("git status ".length).trim();
+      const { statusSummary } = await import("./git.js");
+      say(runId, await statusSummary(path));
+      return;
+    }
+
     // ---- signup engine -------------------------------------------------
     const mSignup = t.match(/^sign ?up (?:on|at|for) (\S+)(?: with google)?$/i);
     if (mSignup) {
