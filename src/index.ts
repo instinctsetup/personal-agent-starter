@@ -11,7 +11,7 @@ import { AgentLoop } from './agent/loop.js';
 import {Reminders} from './runtime/reminders.js';
 import {compactTask} from './memory/compact.js';
 import {checkConfig} from './config.js';
-import {connectEmail,connectTelegram,connectSlack,readHidden,type IO} from './connect.js';
+import {connectEmail,connectTelegram,connectSlack,readHidden,readVisible,type IO} from './connect.js';
 import {loadPlugins} from './tools/plugins.js';
 import {COMMAND_WARNING} from './tools/shell.js';
 import { registry } from './tools/registry.js';
@@ -76,7 +76,9 @@ try {
   else if(command==='notifications'){const n=reminders.fire().length;const u=reminders.unseen();console.log(u.length?u.map(x=>`${x.created_at} ${x.message}`).join('\n'):'No new notifications');if(args[0]==='clear')reminders.markSeen();void n;}
   else if(command==='connect'){
     const service=args[0];
-    const io:IO={ask:(q:string)=>rl.question(q),askHidden:readHidden,print:(s:string)=>console.log(s)};
+    // Close the shared readline so it cannot echo or consume secrets; connect uses raw readers.
+    rl.close();
+    const io:IO={ask:readVisible,askHidden:readHidden,print:(s:string)=>console.log(s)};
     if(service==='email')await connectEmail(io);
     else if(service==='telegram')await connectTelegram(io);
     else if(service==='slack')await connectSlack(io);

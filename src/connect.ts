@@ -1,5 +1,6 @@
 import {readFile,writeFile,chmod} from 'node:fs/promises';
 import nodemailer from 'nodemailer';
+import {spawnSync} from 'node:child_process';
 // Conversational guided setup: "npm start -- connect email|telegram|slack".
 // Secrets are typed with hidden input, written only to the local .env (mode 600), never logged or echoed.
 export type IO={ask:(q:string)=>Promise<string>;askHidden:(q:string)=>Promise<string>;print:(s:string)=>void};
@@ -25,26 +26,38 @@ export async function updateEnv(path:string,pairs:Record<string,string>):Promise
   return changed;
 }
 
-export async function readHidden(prompt:string):Promise<string>{
+// Line reader with local echo control. On a TTY it uses the terminal's raw mode via
+// process.stdin.setRawMode (the supported API: external tools like stty get reverted when
+// the stream resumes) and echoes visible input itself or masks it with '*'. On piped stdin
+// it reads one line plainly. Independent of any readline interface - close or pause those first.
+async function readRaw(prompt:string,hidden:boolean):Promise<string>{
   const stdin=process.stdin,stdout=process.stdout;
+  if(!stdin.isTTY){
+    stdout.write(prompt);
+    return await new Promise<string>(r=>{let s='';const on=(b:Buffer)=>{const t=b.toString('utf8');const i=t.indexOf('\n');if(i>=0){s+=t.slice(0,i);stdin.off('data',on);r(s.trim());}else s+=t;};stdin.on('data',on);stdin.resume();});
+  }
+  // Raw mode BEFORE writing the prompt, so kernel echo can never race the first typed characters.
+  const wasRaw=(stdin as unknown as {isRaw?:boolean}).isRaw??false;
+  stdin.setRawMode(true);
+  stdin.resume();
   stdout.write(prompt);
-  if(!stdin.isTTY)return (await new Promise<string>(r=>{let s='';stdin.on('data',(b:Buffer)=>{const t=b.toString('utf8');const i=t.indexOf('\n');if(i>=0){s+=t.slice(0,i);stdin.pause();r(s.trim());}else s+=t;});stdin.resume();}));
-  stdin.setRawMode(true);stdin.resume();
   return await new Promise(resolve=>{
     let out='';
-    const cleanup=()=>{stdin.off('data',onData);stdin.setRawMode(false);stdin.pause();};
+    const cleanup=()=>{stdin.off('data',onData);stdin.setRawMode(wasRaw);};
     const onData=(b:Buffer)=>{
       for(const ch of b.toString('utf8')){
         if(ch==='\r'||ch==='\n'){cleanup();stdout.write('\n');resolve(out);return;}
         if(ch==='\u0003'){cleanup();stdout.write('\n');process.exit(130);}
-        if(ch==='\u007F'||ch==='\b'){out=out.slice(0,-1);continue;}
+        if(ch==='\u007F'||ch==='\b'){if(out){out=out.slice(0,-1);if(!hidden)stdout.write('\b \b');}continue;}
         if(ch<' ')continue;
-        out+=ch;stdout.write('*');
+        out+=ch;stdout.write(hidden?'*':ch);
       }
     };
     stdin.on('data',onData);
   });
 }
+export const readVisible=(q:string)=>readRaw(q,false);
+export const readHidden=(q:string)=>readRaw(q,true);
 
 async function defaultSendTest(cfg:SmtpCfg,to:string){
   const transport=nodemailer.createTransport({host:cfg.host,port:cfg.port,secure:cfg.port===465,requireTLS:cfg.port!==465,auth:{user:cfg.user,pass:cfg.pass},connectionTimeout:15000,logger:false,debug:false});
