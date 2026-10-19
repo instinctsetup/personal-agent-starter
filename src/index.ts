@@ -8,6 +8,11 @@ import {botServer} from './runtime/bots.js';
 import { Memory } from './memory/db.js';
 import { Router } from './models/router.js';
 import { AgentLoop } from './agent/loop.js';
+import {Reminders} from './runtime/reminders.js';
+import {compactTask} from './memory/compact.js';
+import {checkConfig} from './config.js';
+import {loadPlugins} from './tools/plugins.js';
+import {COMMAND_WARNING} from './tools/shell.js';
 import { registry } from './tools/registry.js';
 const rl=createInterface({input:stdin,output:stdout});
 const dbPath=process.env.AGENT_DB??'agent_memory.db';
@@ -17,7 +22,10 @@ let releaseLock:(()=>Promise<void>)|undefined;
 let hooks:Awaited<ReturnType<typeof botServer>>|undefined;
 const manual=async(message:string)=>{if(process.argv[2]==='daemon')throw new Error('Manual login requires the interactive CLI');console.log(message);await rl.question('Press Enter after completing this step locally. ');};
 const {tools,browser}=registry(manual,memory);
+if(process.env.ENABLE_PLUGINS==='true'&&process.env.PLUGIN_DIR&&['run','resume','daemon'].includes(process.argv[2]??''))Object.assign(tools,await loadPlugins(process.env.PLUGIN_DIR,tools));
+const reminders=new Reminders(memory);
 const loop=new AgentLoop(memory,new Router(),tools,async(name,args)=>{
+  if(name==='run_command')console.log('\n'+COMMAND_WARNING);
   console.log(`\nREVIEW ${name}\n${JSON.stringify(args,null,2)}`);
   return (await rl.question('Allow this exact call? Type yes: '))==='yes';
 });
@@ -59,12 +67,20 @@ try {
     else if(args[0]==='disable'){if(!args[1])throw new Error('Provide job ID');memory.db.prepare('UPDATE jobs SET enabled=0 WHERE id=?').run(args[1]);}
     else console.log(memory.db.prepare('SELECT * FROM jobs').all());
   }
+  else if(command==='remind'){
+    if(args[0]==='add'){if(!args[1]||!args.slice(2).join(' '))throw new Error('remind add ISO_TIME "text"');console.log(reminders.add(args[1],args.slice(2).join(' ')));}
+    else if(args[0]==='cancel'){if(!args[1])throw new Error('Provide reminder ID');reminders.cancel(args[1]);console.log('Cancelled');}
+    else console.log(reminders.list());
+  }
+  else if(command==='notifications'){const n=reminders.fire().length;const u=reminders.unseen();console.log(u.length?u.map(x=>`${x.created_at} ${x.message}`).join('\n'):'No new notifications');if(args[0]==='clear')reminders.markSeen();void n;}
+  else if(command==='compact'){if(!args[0])throw new Error('Provide task ID');console.log(await compactTask(memory,new Router(),args[0]));}
+  else if(command==='config'){const r=checkConfig(process.env);for(const x of r)console.log(`${x.level.toUpperCase()}: ${x.message}`);if(r.some(x=>x.level==='error'))process.exitCode=1;}
   else if(command==='enqueue'){const goal=args.join(' ').trim();if(!goal)throw new Error('Provide goal');console.log(memory.create(goal));}
   else if(command==='run') {const goal=args.join(' ').trim();if(!goal)throw new Error('Provide a goal');const id=memory.create(goal);console.log(`Task ID: ${id}`);await loop.run(id,abort.signal);}
   else if(command==='resume') {if(!args[0])throw new Error('Provide task ID');await loop.run(args[0],abort.signal);}
   else if(command==='status') {console.log(args[0]?memory.task(args[0]):memory.db.prepare('SELECT id,status,steps,goal FROM tasks ORDER BY rowid DESC LIMIT 20').all());}
   else if(command==='login') {const [url,successSelector]=args;if(!url||!successSelector)throw new Error('Usage: login URL SUCCESS_SELECTOR');await browser.start();await browser.login_to_site({url,userSelector:'input[type=email]',passwordSelector:'input[type=password]',submitSelector:'button[type=submit]',successSelector},manual);}
   else if(command==='serve') {const { serve }=await import('./server.js');const server=await serve(memory);console.log(`Read-only dashboard: http://127.0.0.1:${(server.address() as any).port}`);await new Promise<void>(resolve=>{const timer=setInterval(()=>{if(abort.signal.aborted){clearInterval(timer);server.close(()=>resolve());}},250);});}
-  else console.log('Commands: run "goal" | resume TASK_ID | status [TASK_ID] | login URL SUCCESS_SELECTOR | serve | daemon | enqueue "goal" | approvals | approve ID | deny ID | schedule [add/disable]');
+  else console.log('Commands: run "goal" | resume TASK_ID | status [TASK_ID] | login URL SUCCESS_SELECTOR | serve | daemon | enqueue "goal" | approvals | approve ID | deny ID | schedule [add/disable] | remind [add ISO "text"|cancel ID] | notifications [clear] | compact TASK_ID | config');
 } catch(error) {console.error(error instanceof Error?error.message:'Execution failed');process.exitCode=1;}
 finally {if(hooks)await new Promise<void>(resolve=>hooks!.close(()=>resolve()));await browser.close();memory.close();rl.close();await releaseLock?.();}
