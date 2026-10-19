@@ -5,7 +5,7 @@ import { requestApproval, waitApproval } from "./approvals.js";
 import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
-import { getSetting, setSetting } from "./db.js";
+import { getSetting, setSetting, DATA_DIR } from "./db.js";
 import { parseSchedule } from "./scheduler.js";
 import { MockProvider } from "../src/providers/mock.js";
 
@@ -95,6 +95,34 @@ export async function handleUserMessage(text: string): Promise<void> {
       });
       if (msgs === null) say(runId, "Email not connected yet - say `connect email`.");
       else say(runId, msgs.length ? msgs.map((m: any) => `- ${m.subject} (${m.from})`).join("\n") : "Inbox is empty.");
+      return;
+    }
+
+    // ---- universal job applier ------------------------------------------
+    const mApply = t.match(/^apply (?:to|for) (\S+)$/i);
+    if (mApply) {
+      const url = mApply[1];
+      say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
+      const result = await toolCall(runId, "jobs.apply", { url }, async () => {
+        const { runJobApplication } = await import("../src/tools/apply.js");
+        const { ProfileStore } = await import("../src/tools/profile.js");
+        const profile = new ProfileStore(DATA_DIR).get();
+        return runJobApplication({ url, profile, headless: true, dataDir: DATA_DIR }, {
+          askFacts: async () => ({}), // unknown questions surface as `missing` instead of guesses
+          confirmSubmit: async (summary: string) => {
+            const card = requestApproval("submit_application", summary, { url }, runId);
+            say(runId, "Review the application summary above - Approve submits, Reject cancels.", { approval_id: card.id });
+            const res = await waitApproval(card.id);
+            return res.status === "approved";
+          },
+        });
+      });
+      if (result.status === "submitted") {
+        addApplication({ company: new URL(url).hostname, role: "", portal: new URL(url).hostname, url, status: "Applied" });
+        say(runId, `Submitted. Filled ${result.filled.length} field(s). Tracked in Jobs & Tracker.`);
+      } else {
+        say(runId, `Not submitted (${result.status}). ${result.missing.length ? `Missing facts: ${result.missing.join(", ")}. Update with \`connect profile\`.` : result.summary || ""}`);
+      }
       return;
     }
 
@@ -271,6 +299,15 @@ function serviceFields(service: string) {
         { key: "model", label: "Model name", secret: false },
         { key: "model_api_key", label: "API key", secret: true },
       ];
+    case "profile":
+      return [
+        { key: "full_name", label: "Full name", secret: false },
+        { key: "email", label: "Email", secret: false },
+        { key: "phone", label: "Phone", secret: false },
+        { key: "resume_path", label: "Resume file path (absolute)", secret: false },
+        { key: "college", label: "College", secret: false },
+        { key: "grad_year", label: "Graduation year", secret: false },
+      ];
     case "drive": case "google drive":
       return [
         { key: "drive_client_id", label: "OAuth client ID", secret: false },
@@ -303,6 +340,21 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
     } else {
       setSetting(k, v);
     }
+  }
+  if (service === "profile") {
+    const { ProfileStore } = await import("../src/tools/profile.js");
+    const keyMap: Record<string, string> = { full_name: "firstName", email: "email", phone: "phone", resume_path: "resumePath", college: "university", grad_year: "graduationYear" };
+    const patch: Record<string, string> = {};
+    for (const [formKey, profileKey] of Object.entries(keyMap)) if (values[formKey]) patch[profileKey] = values[formKey];
+    if (patch.firstName && patch.firstName.includes(" ")) {
+      const parts = patch.firstName.trim().split(/\s+/);
+      patch.firstName = parts[0];
+      patch.lastName = parts.slice(1).join(" ");
+    }
+    const store = new ProfileStore(DATA_DIR);
+    store.save(patch as any);
+    say(runId, `Profile saved (${Object.keys(patch).length} fields). The job applier fills only these facts.`);
+    return "ok";
   }
   // live validation where possible
   if (service === "model" || service === "model key") {
