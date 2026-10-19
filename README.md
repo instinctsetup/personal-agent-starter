@@ -239,6 +239,16 @@ Tests cover SSRF URL encodings, mixed DNS answers, pinned lookup, redirects, dea
 
 SQLite indexes cover task states, event history, approvals and due jobs. A five-second busy timeout reduces transient lock failures. Model history reads only the latest 40 messages using an indexed query instead of loading every historical event; the original goal is retained in the prompt. The database keeps the full audit history on disk. This is a bounded recent-history window, not AI summarization. No claim of universal speed, automatic cleanup, or production-scale benchmarks is made.
 
+## Daily-use features
+
+- **Reminders and notifications**: `remind add 2026-02-01T09:00:00+05:30 "text"`, `remind list`, `remind cancel ID`, `notifications [clear]`. One-shot, stored in SQLite. They fire while the daemon runs (printed in its console) or when you run `notifications`. A reminder only shows a local message; it never runs tools. No phone/desktop push.
+- **Context compaction**: `compact TASK_ID` asks your configured model to summarize older turns of a task; the summary is added to later prompts. Original history stays in the database. It is manual, and summary quality depends on your model.
+- **Config check**: `config` validates your environment (provider, keys, hooks, risky options) without any network call.
+- **Plugins** (`ENABLE_PLUGINS=true`, `PLUGIN_DIR=./plugins`): drop `.mjs` files that default-export `(z) => ({ name: {description, schema, run} })`; tools are exposed as `plugin_name`. See `plugins-example/hello.mjs`. Plugin code runs with your user permissions, so load only code you wrote or reviewed. Calls still need approval.
+- **Command runner** (`ENABLE_COMMAND_RUNNER=true`, off by default): the `run_command` tool takes `{command, args[], cwd?}`, runs without a shell, starts inside the workspace, has a 30-second timeout, 20k-character output cap and a trimmed environment (PATH, HOME, LANG, TERM). Every call needs exact approval and prints a warning first. **This is not a sandbox**: an approved program runs as you and can read, write or use the network anywhere you can. The workspace start directory is not a confinement boundary. Never auto-approve it.
+
+Tested with mocks and local processes only (34 tests). Not verified: long-running daemon use, real notification delivery, model-written summaries with a real model.
+
 ## Why this exists
 
 Most AI agents either run unattended or are hard to trust. This starter keeps you in control: it plans a task, shows every action before it runs, and remembers progress between sessions. It is meant for learning how agents work and as a base to extend.
@@ -249,4 +259,4 @@ Encrypted credential vault, more browser tools, live-tested Telegram/Slack and e
 
 ## Deliberate limits
 
-No webhook TLS termination, encrypted vault, distributed queue, automatic side-effect retries, mobile notifications or multi-user dashboard. The daemon never approves its own writes. `.env` is not an encrypted vault. File checks are guardrails, not an OS sandbox. The browser allowlist is not a network firewall. See the security document for the full boundaries.
+No webhook TLS termination, encrypted vault, distributed queue, automatic side-effect retries, push notifications or multi-user dashboard. The daemon never approves its own writes. `.env` is not an encrypted vault. File checks are guardrails, not an OS sandbox. The browser allowlist is not a network firewall. See the security document for the full boundaries.
