@@ -213,17 +213,25 @@ The image includes Chromium and runs as non-root. Default command only shows sta
 
 The model can emit a `plan` decision with up to 12 steps or a `reflect` decision containing an observation and next step. These are stored and shown in the terminal. They do not execute actions, count toward the same step budget, and do not prove the plan is correct.
 
-`memory_remember` saves only a note you approve; `memory_recall` searches those notes using SQLite FTS5 (up to 8 ranked results); `memory_forget` deletes a note by UUID. This is keyword recall, not vector memory. Notes are plaintext and may enter the configured model when recalled. Do not save secrets. Nothing automatically copies browser/email content into long-term notes.
+`memory_remember` saves only a note you approve; `memory_recall` searches those notes using SQLite FTS5 (up to 8 ranked results); `memory_forget` deletes a note by UUID. `memory_recall` is keyword recall; see vector memory above for semantic search. Notes are plaintext and may enter the configured model when recalled. Do not save secrets. Nothing automatically copies browser/email content into long-term notes.
+
+## Daemon, scheduler, bot hooks and vector memory
+
+All of this is tested with mocks and local fixtures (see `test/runtime.test.ts`). **Not tested live:** real Telegram/Slack traffic, a real Ollama embedding server, long-running daemon operation.
+
+- **Daemon** (`npm start -- daemon`): runs queued tasks in the background. Every tool call is deny-by-default. Unapproved calls are saved in an `approvals` table and the task waits. List them with `approvals`, then `approve ID` or `deny ID` (each asks you to confirm locally). An approval is bound to the exact tool and arguments and is used once. Optional `AGENT_POLICY` JSON file (`[{"tool":"file_read","args":{...}}]`) auto-approves exact local reads only (`file_read`, `git_status`, `memory_recall`, `memory_vector_recall`). Email, browser, file writes and Git are never auto-approved. A lock file allows one execution process per database.
+- **Scheduler**: `schedule add "*/15 * * * *" "Asia/Kolkata" "goal"`, `schedule`, `schedule disable ID`. Jobs persist in SQLite, use five-field cron, and missed runs are coalesced into one task. Scheduled tasks still go through the approval queue.
+- **Bot hooks** (`BOT_HOOKS=true` with the daemon): loopback HTTP endpoints `/telegram` and `/slack` on port 8788. Telegram needs the webhook secret header plus allowlisted user and chat IDs. Slack needs a valid signature, fresh timestamp, team ID and allowlisted user and channel. Updates are deduplicated. A message only creates a queued task; it does not approve anything. Put your own HTTPS proxy in front. Env: `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USERS`, `TELEGRAM_ALLOWED_CHATS`, `SLACK_SIGNING_SECRET`, `SLACK_TEAM_ID`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`. Outbound send helpers exist in code but are not exposed as agent tools.
+- **Vector memory**: `memory_vector_remember` and `memory_vector_recall` store embeddings from Ollama (`EMBEDDING_MODEL`, default `nomic-embed-text`; `EMBEDDING_BASE_URL`) in SQLite and rank by cosine similarity in process. Fine for small note sets. Note text is sent to the embedding endpoint.
+
+## Why this exists
+
+Most AI agents either run unattended or are hard to trust. This starter keeps you in control: it plans a task, shows every action before it runs, and remembers progress between sessions. It is meant for learning how agents work and as a base to extend.
+
+## Roadmap
+
+Encrypted credential vault, more browser tools, live-tested Telegram/Slack and embedding integrations, outbound bot replies with review. Contributions welcome.
 
 ## Deliberate limits
 
-No autonomous daemon, cron scheduler, bot hooks, webhook receiver, vector memory, encrypted vault, distributed queue, automatic side-effect retries, mobile notifications or multi-user dashboard. These need their own security/reliability work. `.env` is not an encrypted vault; SQLite history is not semantic memory. File checks are guardrails, not an OS sandbox. The browser allowlist is not a network firewall. See the security document for the full boundaries.
-
-Okay, here's something more like project content than credits, a short "Why this exists" section:
-
-A) Why this exists: Most AI agents either run unattended or are hard to trust. This starter keeps you in control: it plans a task, shows every action before it runs, and remembers progress between sessions. Meant for learning how agents work and as a base to extend.
-
-B) Roadmap: scheduled jobs, chat bot hooks (Telegram/Slack), vector memory, an encrypted credential vault, more browser tools. Contributions welcome.
-
-C) Motivation: Built to explore how a personal agent can automate browsing, email and code while a human stays in the loop.
-
+No webhook TLS termination, encrypted vault, distributed queue, automatic side-effect retries, mobile notifications or multi-user dashboard. The daemon never approves its own writes. `.env` is not an encrypted vault. File checks are guardrails, not an OS sandbox. The browser allowlist is not a network firewall. See the security document for the full boundaries.
