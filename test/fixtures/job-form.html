@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><title>Apply - Acme Corp</title></head>
+<body>
+<h1>Software Engineer Intern - Acme Corp</h1>
+<form id="apply" action="about:blank" method="get" onsubmit="document.body.insertAdjacentHTML('beforeend','<div id=thanks>Thanks for applying!</div>');return false;">
+  <label for="fn">First name *</label><input id="fn" name="first_name" type="text" required>
+  <label for="ln">Last name *</label><input id="ln" name="last_name" type="text" required>
+  <label for="em">Email address *</label><input id="em" name="email" type="email" required>
+  <label for="ph">Phone number</label><input id="ph" name="phone" type="tel">
+  <label for="res">Upload your resume *</label><input id="res" name="resume" type="file" required>
+  <label for="lk">LinkedIn profile URL</label><input id="lk" name="linkedin" type="url">
+  <label for="why">Why do you want to work here? *</label><textarea id="why" name="why" required></textarea>
+  <label for="loc">Location *</label>
+  <select id="loc" name="location" required>
+    <option value="">Select...</option><option>Remote</option><option>Mumbai (Hybrid)</option><option>Bengaluru</option>
+  </select>
+  <button type="submit">Submit application</button>
+</form>
+</body></html>

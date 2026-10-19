@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font-family:system-ui,sans-serif;max-width:760px;margin:40px auto;color:#1a1a1a;line-height:1.55;font-size:14px}
+h1{color:#0a7c66}h2{color:#0a7c66;border-bottom:1px solid #ddd;padding-bottom:4px;margin-top:32px}
+code{background:#f2f2f2;padding:1px 5px;border-radius:4px;font-size:13px}
+table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:6px 10px;text-align:left;font-size:13px}
+.warn{background:#fff7e6;border:1px solid #f0c36d;border-radius:6px;padding:10px 14px;margin:12px 0}
+.step{background:#f6f8f8;border-radius:6px;padding:10px 14px;margin:10px 0}
+</style></head><body>
+<h1>Personal Agent - Usage Guide</h1>
+<p>A local-first assistant you run on your own computer. You chat with it in a web UI (or from Telegram), and it can read and summarize your mail, send mail you approve, read Telegram channels, fill out job applications from links, and help on LinkedIn - always with your confirmation before anything is sent.</p>
+
+<h2>1. Install and start</h2>
+<div class="step"><b>One command (macOS/Linux):</b> <code>./start.sh</code> &nbsp; <b>Windows:</b> double-click <code>start.bat</code> &nbsp; <b>macOS Finder:</b> double-click <code>start.command</code></div>
+<p>Requires Node.js 22 or newer from nodejs.org. The first run installs dependencies and a browser, then opens <code>http://127.0.0.1:8787</code> with the setup wizard. Everything - settings, keys, chat history, your profile - stays on your machine under the <code>data/</code> folder with private (600) permissions. Secrets are never written to logs.</p>
+
+<h2>2. Setup wizard</h2>
+<table>
+<tr><th>Step</th><th>What it asks</th><th>Where to get it</th></tr>
+<tr><td>Model provider</td><td>Offline mock, or any OpenAI-compatible endpoint + key</td><td>platform.openai.com, OpenRouter, or local Ollama at http://localhost:11434/v1</td></tr>
+<tr><td>Mail</td><td>Gmail address + app password</td><td>Google Account &gt; Security &gt; 2-Step Verification &gt; App passwords</td></tr>
+<tr><td>Telegram</td><td>Bot token; optional api_id/api_hash + channels</td><td>@BotFather in Telegram; my.telegram.org for api credentials</td></tr>
+<tr><td>Profile</td><td>Name, email, phone, resume path</td><td>Used to answer application forms - never invented</td></tr>
+</table>
+<p>Skip anything and finish later in <b>Settings</b>.</p>
+
+<h2>3. Everyday use</h2>
+<div class="step"><b>Mail:</b> "check mail" - "unread mail" - "mail search stripe" - "summarize mail" - "send mail" (you review the exact email and confirm before it leaves).</div>
+<div class="step"><b>Job applications:</b> paste a job link with the word <i>apply</i>. The agent opens a real browser, fills the form from your saved profile, asks you in chat for anything missing (it never makes facts up), shows a summary, and submits only after you press <b>Confirm</b>. Every attempt - submitted, cancelled, failed - is logged under <b>Applications</b>.</div>
+<div class="step"><b>Telegram:</b> with a bot token saved, message your bot from Telegram - same agent, same chat. "telegram channels" reads the latest posts from channels you configure (one-time login in Settings).</div>
+<div class="step"><b>LinkedIn (opt-in):</b> enable in Settings after reading the risk note. "linkedin login" opens a browser so you log in once yourself. Then: "linkedin feed", "linkedin apply &lt;url&gt;", "linkedin message &lt;url&gt;: text", "linkedin invite &lt;url&gt;: note". Actions are paced (about one feed check an hour, daily caps) and stop immediately on any checkpoint or captcha.</div>
+
+<h2>4. Honest status labels</h2>
+<p>The sidebar shows what is actually working on your machine: green = verified on this install, amber = limited (offline mock model, or at-your-risk LinkedIn), grey = not set up. Features that need your real accounts (mail, Telegram, LinkedIn, applying) are only marked ready after a successful test from the Settings page.</p>
+
+<div class="warn"><b>LinkedIn risk note.</b> LinkedIn's terms discourage automation. This feature uses your own logged-in session at a slow pace with daily caps, but your account could still be restricted. Use at your own risk.</div>
+
+<h2>5. Safety model</h2>
+<table>
+<tr><th>Thing</th><th>Rule</th></tr>
+<tr><td>Sending mail</td><td>Only after you confirm the exact recipient, subject and body</td></tr>
+<tr><td>Submitting applications</td><td>Only after a summary you confirm; cancelled on timeout</td></tr>
+<tr><td>Form answers</td><td>Only from your saved profile or your chat answers - never invented</td></tr>
+<tr><td>Secrets</td><td>Local file, mode 600, masked in logs, never uploaded</td></tr>
+<tr><td>LinkedIn</td><td>Off by default, opt-in, paced, stops on checkpoints</td></tr>
+</table>
+
+<h2>6. Tests and development</h2>
+<p><code>npm test</code> runs the offline test suite (intent parsing, secrets handling, the confirmation gates, the OpenAI-compatible provider against a stub, and a full Playwright application-form flow against a local fixture). <code>npm run doctor</code> checks your install. <code>npm run dev</code> starts with auto-reload.</p>
+</body></html>
