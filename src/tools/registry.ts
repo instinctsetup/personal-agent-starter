@@ -7,6 +7,8 @@ import { BrowserTools } from './browser.js';
 import {VectorMemory,OllamaEmbeddings} from '../memory/vector.js';
 import {WebTools} from './web.js';
 import { EmailTools } from './email.js';
+import {CommandRunner,COMMAND_WARNING} from './shell.js';
+import {Reminders} from '../runtime/reminders.js';
 export function registry(manual:(message:string)=>Promise<void>,memory:Memory):{tools:Record<string,Tool>;browser:BrowserTools} {
   const files=new FileManager(process.env.WORKSPACE_ROOT??'./workspace');
   const git=new GitTools(files.root);
@@ -44,5 +46,11 @@ export function registry(manual:(message:string)=>Promise<void>,memory:Memory):{
     git_push:{description:'Push HEAD to existing credential-free GitHub origin using local gh/SSH auth, {}.',schema:empty,run:()=>git.push()},
     git_lfs:{description:'Set up installed Git LFS for {pattern}.',schema:z.object({pattern:string}).strict(),run:a=>git.lfs(a.pattern)}
   };
+  const reminders=new Reminders(memory);
+  tools.reminder_add={description:'Create a one-shot local reminder {dueAt: ISO time with offset, text}. Only shows a local notification.',schema:z.object({dueAt:z.string().min(10).max(40),text:z.string().min(1).max(1000)}).strict(),run:async a=>({id:reminders.add(a.dueAt,a.text)})};
+  if(process.env.ENABLE_COMMAND_RUNNER==='true'){
+    const runner=new CommandRunner(files.root);
+    tools.run_command={description:'Run {command,args:string[],cwd?} with NO shell. '+COMMAND_WARNING+' Each call needs exact approval.',schema:z.object({command:z.string().min(1).max(200),args:z.array(z.string().max(2000)).max(50),cwd:z.string().max(512).optional()}).strict(),run:a=>runner.run(a.command,a.args,a.cwd)};
+  }
   return {tools,browser};
 }
