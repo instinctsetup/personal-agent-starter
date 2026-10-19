@@ -100,3 +100,17 @@ Docker (optional): `docker build -t personal-agent . && docker run -p 8787:8787 
 - Mail, Telegram and LinkedIn paths are built against documented APIs and site structure but are **not live-verified** on this repo's CI; the Settings page has one-click tests for each, and the sidebar always shows what's actually working on your machine.
 - Generic form filling covers single-page and Greenhouse/Lever-style forms. Complex multi-step builders may need you to finish by hand - the agent says so instead of guessing.
 - This is a personal tool you supervise, not an unattended service.
+
+---
+
+## v2.0 (branch `v2`) — work in progress
+
+v2.0 turns the CLI starter into a self-hosted local web app: chat-first UI (React + Vite + Tailwind, dark),
+Fastify daemon with WebSocket event stream, SQLite (WAL) persistence, AES-256-GCM credential vault,
+human-in-the-loop approval cards, keyless web search (DuckDuckGo → Bing fallback), application tracker,
+and in-chat setup cards. Run: `npm install && npm start` → opens http://127.0.0.1:3090.
+
+Status (as of 2026-10-20): core daemon + UI shell + chat/approvals/vault/tracker/search working, 59 tests green.
+Still building: Playwright live-browser tab, Drive/Docs sync, inbox & cold-mail hub, scheduler UI,
+Telegram/Slack bridge, PDF guide, demo video. Note: keyless search can be rate-limited/blocked on
+datacenter IPs (DuckDuckGo returns 202 challenge); works from normal connections.

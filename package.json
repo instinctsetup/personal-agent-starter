@@ -1,33 +1,52 @@
 {
   "name": "personal-agent",
-  "version": "1.0.0",
+  "version": "2.0.0-alpha",
   "private": true,
   "type": "module",
   "description": "Local-first personal agent with a web chat UI: mail, Telegram, job applications and LinkedIn assist.",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "npm run build && npm run build:ui && node dist/src2/server.js",
     "dev": "tsx src/server.ts",
     "test": "tsx --test test/*.test.ts",
     "doctor": "node scripts/doctor.mjs",
     "guide": "node scripts/make-guide.mjs",
-    "demo": "node scripts/record-demo.mjs"
+    "demo": "node scripts/record-demo.mjs",
+    "dev2": "tsx src2/server.ts",
+    "build:ui": "vite build web-v2",
+    "start:legacy": "node dist/src/server.js"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "better-sqlite3": "^13.0.3",
+    "concurrently": "^10.0.6",
     "dotenv": "^16.4.7",
+    "fastify": "^5.12.7",
     "imapflow": "^1.0.181",
     "mailparser": "^3.7.2",
     "nodemailer": "^10.1.7",
+    "open": "^11.0.4",
     "playwright": "^1.51.0",
     "telegram": "^2.26.22",
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/mailparser": "^3.4.5",
     "@types/node": "^22.13.10",
     "@types/nodemailer": "^8.0.2",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.1.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.3",
     "tsx": "^4.19.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vite": "^8.3.4"
   }
 }
