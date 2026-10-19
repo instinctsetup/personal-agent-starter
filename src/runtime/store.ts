@@ -13,6 +13,8 @@ export class RuntimeStore {
   constructor(readonly memory:Memory){memory.db.exec(`
     CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,tool TEXT NOT NULL,args TEXT NOT NULL,digest TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending');
     CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,cron TEXT NOT NULL,timezone TEXT NOT NULL,goal TEXT NOT NULL,next_at TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 1);
+    CREATE INDEX IF NOT EXISTS approvals_task_digest ON approvals(task_id,digest);
+    CREATE INDEX IF NOT EXISTS jobs_due ON jobs(enabled,next_at);
     CREATE TABLE IF NOT EXISTS receipts(source TEXT NOT NULL,event_id TEXT NOT NULL,task_id TEXT NOT NULL,PRIMARY KEY(source,event_id));
   `);}
   approve(task:string,tool:string,args:unknown,rules:Rule[]=[]):boolean {
