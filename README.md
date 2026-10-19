@@ -37,7 +37,8 @@ personal-agent-starter/
 
 | Area | Included |
 | --- | --- |
-| Agent | One validated decision at a time, human approval, 25-step budget, explicit resume |
+| Agent | Persisted plan/reflection decisions, human approval, 25-step budget, explicit resume |
+| Recall | Explicit non-secret notes with SQLite FTS5 ranked search and deletion |
 | Models | Anthropic, OpenAI, OpenRouter and Ollama over public HTTP APIs |
 | Persistence | SQLite sessions, goals, states, approved calls, ordinary outputs and errors |
 | Browser | Persistent profiles, origin allowlist, 1.5-second action spacing, forms, clicks, Markdown, screenshots |
@@ -206,6 +207,12 @@ The image includes Chromium and runs as non-root. Default command only shows sta
 | Setup refuses overwrite | Preserve/edit the existing `.env` locally |
 
 `npm run doctor` checks local prerequisites without inspecting secret values.
+
+## Explicit memory and reasoning
+
+The model can emit a `plan` decision with up to 12 steps or a `reflect` decision containing an observation and next step. These are stored and shown in the terminal. They do not execute actions, count toward the same step budget, and do not prove the plan is correct.
+
+`memory_remember` saves only a note you approve; `memory_recall` searches those notes using SQLite FTS5 (up to 8 ranked results); `memory_forget` deletes a note by UUID. This is keyword recall, not vector memory. Notes are plaintext and may enter the configured model when recalled. Do not save secrets. Nothing automatically copies browser/email content into long-term notes.
 
 ## Deliberate limits
 
