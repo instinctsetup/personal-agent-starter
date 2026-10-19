@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 export type Status = 'queued' | 'running' | 'waiting' | 'completed' | 'failed';
 export class Memory {
   readonly db: DatabaseSync;
-  constructor(path = 'agent_memory.db') {
+  constructor(path = 'agent_memory.db', recover = true) {
     this.db = new DatabaseSync(path);
     if (path !== ':memory:') chmodSync(path, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
@@ -14,7 +14,7 @@ export class Memory {
       CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY, session_id TEXT REFERENCES sessions(id), goal TEXT NOT NULL, status TEXT NOT NULL, steps INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, task_id TEXT REFERENCES tasks(id), kind TEXT NOT NULL, body TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
     // A restart never replays an uncertain side effect automatically.
-    this.db.prepare("UPDATE tasks SET status='waiting' WHERE status='running'").run();
+    if(recover)this.db.prepare("UPDATE tasks SET status='waiting' WHERE status='running'").run();
   }
   create(goal: string): string {
     const session = randomUUID(), id = randomUUID();
