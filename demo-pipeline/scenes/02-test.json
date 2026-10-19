@@ -1,0 +1,3 @@
+{"name":"02-test","cwd":"/tmp/demo-clone","hold":1.5,"script":[
+{"cmd":"npm test 2>&1 | tail -16; echo __T__","wait":"__T__","timeout":300,"settle":2}
+]}

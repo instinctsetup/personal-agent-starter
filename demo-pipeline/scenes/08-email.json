@@ -1,0 +1,4 @@
+{"name":"08-email","cwd":"/home/sandbox/personal-agent-starter","hold":2,"script":[
+{"cmd":"npm start --silent -- run \"Send mail to sam@example.com saying the report ships Friday\"","wait":"Type yes","timeout":40,"settle":2},
+{"send":"yes","wait":"placeholder","timeout":60,"delay":1.0}
+]}

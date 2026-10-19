@@ -1,0 +1,4 @@
+{"name":"06-webfetch","cwd":"/home/sandbox/personal-agent-starter","hold":2,"script":[
+{"cmd":"npm start --silent -- run \"Read https://example.com and summarize it\"","wait":"Type yes","timeout":40},
+{"send":"yes","wait":"Summary:","timeout":40,"delay":1.0}
+]}

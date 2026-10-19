@@ -1,0 +1,29 @@
+{
+ "name": "15-compact",
+ "cwd": "/home/sandbox/personal-agent-starter",
+ "hold": 2,
+ "script": [
+  {
+   "cmd": "OUT=$(npm start --silent -- run \"Long research thread demo: review all queued source batches\" 2>&1 | tee /dev/tty); ID2=$(printf '%s' \"$OUT\" | grep -o 'Task ID: [0-9a-f-]*' | cut -d' ' -f3); echo TASK=$ID2",
+   "wait": "Pausing after 20",
+   "timeout": 180,
+   "settle": 2
+  },
+  {
+   "cmd": "npm start --silent -- resume \"$ID2\" 2>&1 | tail -6; echo __RS__",
+   "wait": "Reviewed all queued sources",
+   "timeout": 180,
+   "settle": 2
+  },
+  {
+   "cmd": "npm start --silent -- compact \"$ID2\"; echo __CP__",
+   "wait": "__CP__",
+   "timeout": 60
+  },
+  {
+   "cmd": "npm start --silent -- status \"$ID2\" | head -12; echo __ST__",
+   "wait": "__ST__",
+   "timeout": 20
+  }
+ ]
+}

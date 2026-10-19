@@ -1,0 +1,21 @@
+[
+{"kicker":"personal-agent-starter","title":"A local personal agent you can actually inspect","sub":"Live demo of every feature - real CLI runs, start to finish"},
+{"kicker":"honest labels","title":"How this demo was made","sub":"Real terminal runs of the real CLI. The model is a scripted local mock (no real tokens spent) - every CLI feature shown is real. Anything not live-tested is labeled."},
+{"kicker":"part 1","title":"Install: clone, npm ci, build","sub":"From zero to a built checkout"},
+{"kicker":"part 2","title":"Test suite","sub":"42 automated tests guard the loop, tools, memory and safety rails"},
+{"kicker":"part 3","title":"Setup and config check","sub":"npm run setup writes a local .env. Here it points at a scripted local mock model on 127.0.0.1:8090 - no real model, no real tokens."},
+{"kicker":"part 4","title":"Guided connect: email, Telegram, Slack","sub":"NEW: say what you want to connect; secrets are typed hidden, stored in .env with mode 600, never logged. Live provider sends untested."},
+{"kicker":"part 5","title":"First task: create a file","sub":"Every tool call is reviewed before it runs. Nothing executes without your yes."},
+{"kicker":"part 6","title":"Web fetch","sub":"Fetch and summarize a public page - approved explicitly, content treated as untrusted data"},
+{"kicker":"part 7","title":"Memory","sub":"Explicit notes: save a preference, then answer from it later"},
+{"kicker":"part 8","title":"Email from plain English","sub":"'Send mail to X saying Y' - the draft is shown exactly, and sends only after you type yes. Demo SMTP is a placeholder, so the send honestly fails."},
+{"kicker":"part 9","title":"Git tools","sub":"Init a repo and commit the greeting file - Conventional Commits, reviewed calls"},
+{"kicker":"part 10","title":"Command runner","sub":"Opt-in shell-free commands. Each call shows the exact command and needs your yes"},
+{"kicker":"part 11","title":"Plugins","sub":"Drop a reviewed .mjs in the plugin dir - it becomes a tool with the same review rules"},
+{"kicker":"part 12","title":"Browser tools","sub":"Persistent Chromium with an allowlist - navigate, read pages, fill forms"},
+{"kicker":"part 13","title":"Reminders and scheduled jobs","sub":"One-shot reminders and cron jobs, stored locally"},
+{"kicker":"part 14","title":"Daemon mode","sub":"Watches reminders and queued tasks. Actions still wait for your approval - no automatic outbound anything"},
+{"kicker":"part 15","title":"Long tasks and compaction","sub":"Pause, resume, and compact a long thread into local notes"},
+{"kicker":"part 16","title":"Status and the read-only dashboard","sub":"See every task, approval and job at a glance"},
+{"kicker":"part 17","title":"Config reference and wrap-up","sub":".env.example documents every knob. main @ cbcbaec - github.com/instinctsetup/personal-agent-starter"}
+]

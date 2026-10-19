@@ -1,0 +1,6 @@
+{"name":"07-memory","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- run \"Remember that I prefer concise weekly summaries\"","wait":"Type yes","timeout":40},
+{"send":"yes","wait":"Saved.","timeout":30,"delay":0.8},
+{"cmd":"npm start --silent -- run \"What writing style do I prefer? Check your notes.\"","wait":"Type yes","timeout":40},
+{"send":"yes","wait":"concise weekly summaries","timeout":30,"delay":0.8}
+]}

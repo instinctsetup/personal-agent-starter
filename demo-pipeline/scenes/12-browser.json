@@ -1,0 +1,6 @@
+{"name":"12-browser","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- run \"Open https://example.com in the browser and read the page\"","wait":"Type yes","timeout":60},
+{"send":"yes","wait":"Type yes","timeout":40,"delay":0.8},
+{"send":"yes","wait":"Type yes","timeout":40,"delay":0.8},
+{"send":"yes","wait":"IANA example domain","timeout":40,"delay":0.8}
+]}

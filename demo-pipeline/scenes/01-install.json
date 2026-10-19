@@ -1,0 +1,5 @@
+{"name":"01-install","cwd":"/home/sandbox","hold":1.5,"script":[
+{"cmd":"rm -rf /tmp/demo-clone && git clone --depth 1 https://github.com/instinctsetup/personal-agent-starter.git /tmp/demo-clone && echo __CLONED__","wait":"__CLONED__","timeout":120},
+{"cmd":"cd /tmp/demo-clone && npm ci && echo __CI_OK__","wait":"__CI_OK__","timeout":300,"settle":2},
+{"cmd":"npm run build && echo __BUILD_OK__","wait":"__BUILD_OK__","timeout":180,"settle":1.5}
+]}

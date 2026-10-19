@@ -1,0 +1,5 @@
+{"name":"05-first-task","cwd":"/home/sandbox/personal-agent-starter","hold":2,"script":[
+{"cmd":"npm start --silent -- run \"Create hello.txt with a friendly greeting\"","wait":"Type yes","timeout":40},
+{"send":"yes","wait":"Created hello.txt","timeout":30,"delay":1.0},
+{"cmd":"cat workspace/hello.txt && echo __H__","wait":"__H__","timeout":10}
+]}

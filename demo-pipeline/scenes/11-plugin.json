@@ -1,0 +1,23 @@
+{
+ "name": "11-plugin",
+ "cwd": "/home/sandbox/personal-agent-starter",
+ "hold": 1.5,
+ "script": [
+  {
+   "cmd": "cat plugins/hello.mjs && echo __PL__",
+   "wait": "__PL__",
+   "timeout": 10
+  },
+  {
+   "cmd": "npm start --silent -- run \"Use the hello plugin to greet the team\"",
+   "wait": "Type yes",
+   "timeout": 40
+  },
+  {
+   "send": "yes",
+   "wait": "greeted the team",
+   "timeout": 30,
+   "delay": 0.8
+  }
+ ]
+}

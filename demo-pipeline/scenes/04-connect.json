@@ -1,0 +1,98 @@
+{
+ "name": "04-connect",
+ "cwd": "/home/sandbox/personal-agent-starter",
+ "hold": 2,
+ "script": [
+  {
+   "cmd": "npm start --silent -- connect email",
+   "wait": "Gmail/SMTP address",
+   "timeout": 20
+  },
+  {
+   "send": "demo.user@gmail.com",
+   "wait": "App password",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "send": "abcd efgh ijkl mnop",
+   "wait": "SMTP host",
+   "timeout": 10,
+   "delay": 1.0
+  },
+  {
+   "send": "",
+   "wait": "SMTP port",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "send": "",
+   "wait": "Type yes",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "send": "no",
+   "wait": "Skipped test mail",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "cmd": "ls -l .env && echo __P__",
+   "wait": "__P__",
+   "timeout": 15
+  },
+  {
+   "cmd": "npm start --silent -- connect telegram",
+   "wait": "Bot token",
+   "timeout": 20
+  },
+  {
+   "send": "123456:ABC-demo-token-not-real",
+   "wait": "chat ID",
+   "timeout": 30,
+   "delay": 1.0
+  },
+  {
+   "send": "123456789",
+   "wait": "Saved",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "cmd": "npm start --silent -- connect slack",
+   "wait": "Signing secret",
+   "timeout": 20
+  },
+  {
+   "send": "demo-signing-secret",
+   "wait": "Team ID",
+   "timeout": 10,
+   "delay": 1.0
+  },
+  {
+   "send": "T0123DEMO",
+   "wait": "Channel ID",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "send": "C0123DEMO",
+   "wait": "user ID",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "send": "U0123DEMO",
+   "wait": "Saved",
+   "timeout": 10,
+   "delay": 0.8
+  },
+  {
+   "cmd": "cut -d= -f1 .env | grep -E 'SMTP|MAIL_FROM|TELEGRAM|SLACK'; echo __KEYS__",
+   "wait": "__KEYS__",
+   "timeout": 10
+  }
+ ]
+}

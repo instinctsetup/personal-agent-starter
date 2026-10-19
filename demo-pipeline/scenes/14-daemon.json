@@ -1,0 +1,56 @@
+{
+ "name": "14-daemon",
+ "cwd": "/home/sandbox/personal-agent-starter",
+ "hold": 2,
+ "script": [
+  {
+   "cmd": "npm start --silent -- remind add \"$(date -d '+25 seconds' --iso-8601=seconds)\" \"Stretch and review the queued approval\" && echo __RADD__",
+   "wait": "__RADD__",
+   "timeout": 20
+  },
+  {
+   "cmd": "npm start --silent -- enqueue \"Write today's focus note\" && echo __ENQ__",
+   "wait": "__ENQ__",
+   "timeout": 20
+  },
+  {
+   "cmd": "npm start --silent -- daemon < /dev/null &",
+   "wait": "Daemon active",
+   "timeout": 30,
+   "settle": 3
+  },
+  {
+   "shell": "true",
+   "wait_only": "Reminder (due",
+   "timeout": 100,
+   "settle": 2
+  },
+  {
+   "cmd": "npm start --silent -- approvals",
+   "wait": "pending",
+   "timeout": 30,
+   "settle": 1.5
+  },
+  {
+   "cmd": "ID=$(npm start --silent -- approvals 2>/dev/null | grep -o \"id: '[^']*'\" | head -1 | cut -d\"'\" -f2); npm start --silent -- approve \"$ID\"",
+   "wait": "Type yes",
+   "timeout": 30
+  },
+  {
+   "send": "yes",
+   "wait": "Wrote today",
+   "timeout": 45,
+   "delay": 0.8
+  },
+  {
+   "cmd": "sleep 6; npm start --silent -- notifications; echo __N__",
+   "wait": "__N__",
+   "timeout": 30
+  },
+  {
+   "cmd": "pkill -f \"dist/index.js daemon\"; sleep 1; npm start --silent -- status | head -10; echo __S__",
+   "wait": "__S__",
+   "timeout": 30
+  }
+ ]
+}

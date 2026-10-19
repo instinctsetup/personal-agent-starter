@@ -1,0 +1,4 @@
+{"name":"10-command","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- run \"List the workspace files with the command runner\"","wait":"Type yes","timeout":40,"settle":2},
+{"send":"yes","wait":"Listed the workspace","timeout":30,"delay":1.0}
+]}

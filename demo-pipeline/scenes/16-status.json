@@ -1,0 +1,6 @@
+{"name":"16-status","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- status | head -30; echo __L__","wait":"__L__","timeout":20},
+{"cmd":"npm start --silent -- serve < /dev/null &","wait":"Read-only dashboard","timeout":30,"settle":3},
+{"cmd":"curl -s http://127.0.0.1:8787 | head -12; echo __D__","wait":"__D__","timeout":20},
+{"cmd":"pkill -f \"dist/index.js serve\"; sleep 1; echo __K__","wait":"__K__","timeout":15}
+]}

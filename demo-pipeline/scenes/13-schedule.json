@@ -1,0 +1,5 @@
+{"name":"13-schedule","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- schedule add \"45 9 * * 1\" \"Asia/Kolkata\" \"Weekly review: summarize queued approvals\" && echo __J__","wait":"__J__","timeout":20},
+{"cmd":"npm start --silent -- schedule; echo __JL__","wait":"__JL__","timeout":20},
+{"cmd":"npm start --silent -- remind add \"$(date -d '+20 seconds' --iso-8601=seconds)\" \"Stretch and review the queued approval\" && npm start --silent -- remind list; echo __R__","wait":"__R__","timeout":30}
+]}

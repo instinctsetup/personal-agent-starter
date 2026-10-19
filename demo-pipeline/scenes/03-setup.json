@@ -1,0 +1,35 @@
+{
+ "name": "03-setup",
+ "cwd": "/home/sandbox/personal-agent-starter",
+ "hold": 1.5,
+ "script": [
+  {
+   "cmd": "rm -f .env && npm run setup",
+   "wait": "Provider",
+   "timeout": 30
+  },
+  {
+   "send": "",
+   "wait": "Model name",
+   "timeout": 15,
+   "delay": 0.8
+  },
+  {
+   "send": "",
+   "wait": "Created private",
+   "timeout": 15,
+   "delay": 0.8
+  },
+  {
+   "cmd": "sed -i 's|^MODEL_BASE_URL=.*|MODEL_BASE_URL=http://127.0.0.1:8090|; s|^MODEL_NAME=.*|MODEL_NAME=mock-demo|; s|^BROWSER_HEADLESS=.*|BROWSER_HEADLESS=true|' .env && printf 'ENABLE_COMMAND_RUNNER=true\nENABLE_PLUGINS=true\nPLUGIN_DIR=./plugins\n' >> .env && grep -E 'MODEL_|ENABLE_|PLUGIN_DIR|BROWSER_HEAD' .env && echo __E__",
+   "wait": "__E__",
+   "timeout": 15
+  },
+  {
+   "cmd": "npm start --silent -- config; echo __C__",
+   "wait": "__C__",
+   "timeout": 40,
+   "settle": 2
+  }
+ ]
+}

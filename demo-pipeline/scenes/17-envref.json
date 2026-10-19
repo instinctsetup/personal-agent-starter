@@ -1,0 +1,4 @@
+{"name":"17-envref","cwd":"/home/sandbox/personal-agent-starter","hold":2,"script":[
+{"cmd":"grep -v '^$' .env.example | head -30; echo __V__","wait":"__V__","timeout":10},
+{"cmd":"echo; echo \"Repo: github.com/instinctsetup/personal-agent-starter - main @ $(git rev-parse --short HEAD)\"; echo __Z__","wait":"__Z__","timeout":10}
+]}

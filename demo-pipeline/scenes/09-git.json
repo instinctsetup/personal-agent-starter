@@ -1,0 +1,5 @@
+{"name":"09-git","cwd":"/home/sandbox/personal-agent-starter","hold":1.5,"script":[
+{"cmd":"npm start --silent -- run \"Initialize git in the workspace and commit the greeting file\"","wait":"Type yes","timeout":40},
+{"send":"yes","wait":"Type yes","timeout":30,"delay":0.8},
+{"send":"yes","wait":"committed hello.txt","timeout":30,"delay":0.8}
+]}
