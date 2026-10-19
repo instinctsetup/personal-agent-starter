@@ -28,6 +28,8 @@ export class Memory {
   state(id: string, status: Status) { this.db.prepare('UPDATE tasks SET status=? WHERE id=?').run(status,id); this.record(id,'status',{status}); }
   record(id: string, kind: string, body: unknown) { this.db.prepare('INSERT INTO events(task_id,kind,body) VALUES (?,?,?)').run(id,kind,JSON.stringify(body)); }
   messages(id: string, limit=40): Array<{role:'user'|'assistant';content:string}> { return this.db.prepare("SELECT body FROM events WHERE task_id=? AND kind='message' ORDER BY id DESC LIMIT ?").all(id,Math.max(1,Math.min(200,Math.floor(limit)||40))).reverse().map(r => JSON.parse(String(r.body))); }
+  summary(id: string): string { const r=this.db.prepare("SELECT body FROM events WHERE task_id=? AND kind='summary' ORDER BY id DESC LIMIT 1").get(id); return r?String(JSON.parse(String(r.body)).text):''; }
+  summaryUpTo(id: string): number { const r=this.db.prepare("SELECT body FROM events WHERE task_id=? AND kind='summary' ORDER BY id DESC LIMIT 1").get(id); return r?Number(JSON.parse(String(r.body)).upTo):0; }
   step(id: string) { this.db.prepare('UPDATE tasks SET steps=steps+1 WHERE id=?').run(id); }
   remember(text: string): string {
     if (!text.trim() || text.length > 10000) throw new Error('Notes must be 1-10000 characters');
