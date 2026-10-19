@@ -1,5 +1,9 @@
 # Personal Agent Starter
 
+> **Demo video (2 min walkthrough):** https://drive.google.com/file/d/12Ja-crRlLy7bjXA5RHiszHuNIYRuBgjJ/view
+> **26-page PDF guide (with real screenshots):** https://drive.google.com/file/d/1Cl34FnBS-EK1JJ1-OHO0rvw4JTd4e181/view
+
+
 A local-first personal agent you run on your own machine: chat with it in a web UI,
 let it browse, sign up, apply, mail, schedule, and sync - with every consequential
 action behind an approval card you can edit before anything happens.
