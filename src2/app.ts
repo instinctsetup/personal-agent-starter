@@ -14,6 +14,8 @@ import { listCredentials } from "./vault.js";
 import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
 import { listInbox, mailConfigured } from "./mail.js";
 import { listSignups } from "./signup.js";
+import { handleSlackEvent, verifySlackSignature, startTelegramBridge } from "./bridge.js";
+import { getCredential } from "./vault.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
@@ -72,6 +74,17 @@ export async function buildApp() {
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
   app.get("/api/jobs", async () => ({ jobs: listJobs() }));
   app.get("/api/signups", async () => ({ signups: listSignups() }));
+  app.post("/api/slack/events", async (req, reply) => {
+    const raw = JSON.stringify(req.body);
+    const secret = getCredential("slack-signing")?.secret;
+    if (secret) {
+      const ts = req.headers["x-slack-request-timestamp"] as string;
+      const sig = req.headers["x-slack-signature"] as string;
+      if (!verifySlackSignature(secret, ts || "", raw, sig || "")) return reply.code(401).send({ error: "bad signature" });
+    }
+    return handleSlackEvent(req.body);
+  });
+  app.post("/api/bridge/telegram/start", async () => ({ started: await startTelegramBridge() }));
   app.get("/api/mail/inbox", async () => {
     if (!mailConfigured()) return { configured: false, messages: [] };
     try { return { configured: true, messages: await listInbox() }; }
