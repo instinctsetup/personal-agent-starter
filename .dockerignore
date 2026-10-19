@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.env
+.env.*
+.browser_profiles
+playwright
+*.db*
+*.sqlite*
+workspace
+artifacts
