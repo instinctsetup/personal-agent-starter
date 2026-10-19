@@ -12,6 +12,7 @@ import { resolveApproval, getApproval } from "./approvals.js";
 import { listApplications, addApplication, updateApplication, deleteApplication, trackerCsv } from "./tracker.js";
 import { listCredentials } from "./vault.js";
 import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
+import { listInbox, mailConfigured } from "./mail.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
@@ -69,6 +70,11 @@ export async function buildApp() {
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
   app.get("/api/jobs", async () => ({ jobs: listJobs() }));
+  app.get("/api/mail/inbox", async () => {
+    if (!mailConfigured()) return { configured: false, messages: [] };
+    try { return { configured: true, messages: await listInbox() }; }
+    catch (e: any) { return { configured: true, error: String(e?.message || e), messages: [] }; }
+  });
   app.post("/api/jobs/:id/toggle", async (req) => {
     const { enabled } = req.body as { enabled: boolean };
     return { ok: setJobEnabled((req.params as any).id, enabled) };

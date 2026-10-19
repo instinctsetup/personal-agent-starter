@@ -87,6 +87,17 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    if (lower === "inbox" || lower === "check mail" || lower === "check email") {
+      const msgs = await toolCall(runId, "mail.inbox", {}, async () => {
+        const { mailConfigured, listInbox } = await import("./mail.js");
+        if (!mailConfigured()) return null;
+        return listInbox(5);
+      });
+      if (msgs === null) say(runId, "Email not connected yet - say `connect email`.");
+      else say(runId, msgs.length ? msgs.map((m: any) => `- ${m.subject} (${m.from})`).join("\n") : "Inbox is empty.");
+      return;
+    }
+
     // ---- scheduler ---------------------------------------------------------
     const sched = parseSchedule(lower);
     if (sched) {
@@ -124,11 +135,13 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, "Draft ready. Review the card above - you can edit every field before approving.", { approval_id: card.id });
       const res = await waitApproval(card.id);
       if (res.status === "approved") {
-        await toolCall(runId, "mail.send", res.payload, async () => {
-          if (!getSetting("smtp_host")) return { simulated: true, note: "SMTP not configured - no real email left this machine" };
-          return { simulated: false };
+        const result = await toolCall(runId, "mail.send", res.payload, async () => {
+          const { mailConfigured, sendMail } = await import("./mail.js");
+          if (!mailConfigured()) return { simulated: true, note: "email not connected - nothing left this machine" };
+          const p = res.payload as any;
+          return sendMail(p.to, p.subject || "(no subject)", p.body || "");
         });
-        say(runId, res.payload && getSetting("smtp_host") ? "Email sent." : "Approved. (No SMTP configured yet - nothing actually sent. Use `connect email`.)");
+        say(runId, (result as any)?.simulated === false ? `Email sent to ${(res.payload as any).to}.` : "Approved. (Email not connected - nothing actually sent. Use `connect email`.)");
       } else {
         say(runId, res.status === "expired" ? "Approval expired - nothing sent." : "Rejected - nothing sent.");
       }
