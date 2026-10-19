@@ -74,6 +74,12 @@ export async function buildApp() {
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
   app.get("/api/jobs", async () => ({ jobs: listJobs() }));
   app.get("/api/signups", async () => ({ signups: listSignups() }));
+  app.get("/api/drive", async () => {
+    const { driveConfigured, listDriveFiles } = await import("./drive.js");
+    if (!driveConfigured()) return { configured: false, files: [] };
+    try { return { configured: true, files: await listDriveFiles(30) }; }
+    catch (e: any) { return { configured: true, error: String(e?.message || e), files: [] }; }
+  });
   app.post("/api/slack/events", async (req, reply) => {
     const raw = JSON.stringify(req.body);
     const secret = getCredential("slack-signing")?.secret;

@@ -86,7 +86,8 @@ export default function App() {
         {tab === "vault" && <VaultTab />}
         {tab === "browser" && <BrowserTab />}
         {tab === "inbox" && <InboxTab />}
-        {tab !== "chat" && tab !== "jobs" && tab !== "vault" && tab !== "browser" && tab !== "inbox" && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
+        {tab === "drive" && <DriveTab />}
+        {!["chat", "jobs", "vault", "browser", "inbox", "drive"].includes(tab) && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
       </main>
     </div>
   );
@@ -470,6 +471,35 @@ function InboxTab() {
         <button onClick={() => fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: `send mail to ${to}: ${body}` }) })}
           className="mt-2 bg-sky-600 hover:bg-sky-500 rounded-lg px-4 py-2 text-sm font-semibold">Draft + review in Chat</button>
       </section>
+    </div>
+  );
+}
+
+
+function DriveTab() {
+  const [data, setData] = useState<any>(null);
+  useEffect(() => { fetch("/api/drive").then(r => r.json()).then(setData); }, []);
+  return (
+    <div className="p-6 overflow-y-auto h-full space-y-4">
+      <h2 className="text-lg font-semibold">Drive & Docs</h2>
+      {!data && <div className="text-slate-500 text-sm">Loading…</div>}
+      {data && !data.configured && (
+        <div className="text-slate-500 text-sm max-w-xl">
+          Drive not connected. Say <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">connect drive</code> in chat
+          with an OAuth client ID/secret + refresh token (one-time Google Cloud setup). Then:
+          <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs ml-1">upload ./report.pdf to drive</code>
+          <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs ml-1">sync ./docs to drive</code>
+        </div>
+      )}
+      {data?.error && <div className="text-amber-300 text-sm">{data.error}</div>}
+      <div className="space-y-2">
+        {(data?.files || []).map((f: any) => (
+          <div key={f.id} className="bg-[#161b22] border border-slate-800 rounded-lg px-3 py-2 text-sm flex justify-between gap-3">
+            <span>{f.name}</span>
+            {f.webViewLink && <a href={f.webViewLink} target="_blank" className="text-sky-400 text-xs hover:underline shrink-0">open</a>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

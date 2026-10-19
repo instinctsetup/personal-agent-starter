@@ -98,6 +98,36 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
+    // ---- drive -----------------------------------------------------------
+    if (lower === "drive" || lower === "drive files") {
+      const files = await toolCall(runId, "drive.list", {}, async () => {
+        const { driveConfigured, listDriveFiles } = await import("./drive.js");
+        if (!driveConfigured()) return null;
+        return listDriveFiles(10);
+      });
+      if (files === null) say(runId, "Drive not connected - say `connect drive`.");
+      else say(runId, files.length ? files.map((f: any) => `- ${f.name}${f.webViewLink ? ` - ${f.webViewLink}` : ""}`).join("\n") : "Drive is empty.");
+      return;
+    }
+    const mUpload = t.match(/^upload (\S+) to drive( as doc)?$/i);
+    if (mUpload) {
+      const f = await toolCall(runId, "drive.upload", { path: mUpload[1] }, async () => {
+        const { uploadToDrive } = await import("./drive.js");
+        return uploadToDrive(mUpload[1], { asGoogleDoc: Boolean(mUpload[2]) });
+      });
+      say(runId, `Uploaded: ${f.name}${f.webViewLink ? ` - ${f.webViewLink}` : ""}`);
+      return;
+    }
+    const mSync = t.match(/^sync (\S+) to drive$/i);
+    if (mSync) {
+      const r = await toolCall(runId, "drive.sync", { dir: mSync[1] }, async () => {
+        const { syncFolder } = await import("./drive.js");
+        return syncFolder(mSync[1]);
+      });
+      say(runId, `Synced: ${r.uploaded.length} uploaded (${r.uploaded.join(", ") || "none"}), ${r.skipped.length} unchanged.`);
+      return;
+    }
+
     // ---- git engine ------------------------------------------------------
     const mGitInit = t.match(/^(?:git init|new repo)(?:\s+(\S+))?$/i);
     if (mGitInit) {
@@ -240,6 +270,12 @@ function serviceFields(service: string) {
         { key: "model_base_url", label: "Base URL (OpenAI-compatible; blank = OpenAI)", secret: false },
         { key: "model", label: "Model name", secret: false },
         { key: "model_api_key", label: "API key", secret: true },
+      ];
+    case "drive": case "google drive":
+      return [
+        { key: "drive_client_id", label: "OAuth client ID", secret: false },
+        { key: "drive_client_secret", label: "OAuth client secret", secret: true },
+        { key: "drive_refresh_token", label: "Refresh token", secret: true },
       ];
     case "email": case "gmail":
       return [
