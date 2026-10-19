@@ -4,6 +4,10 @@
 <p align="center"><b>A TypeScript personal-assistant workspace you run and review yourself.</b><br>Natural-language tasks, persistent progress and tools you control.</p>
 <p align="center"><img alt="Node 22.13+" src="https://img.shields.io/badge/Node-22.13%2B-60e6de?style=flat-square"> <img alt="Strict TypeScript" src="https://img.shields.io/badge/TypeScript-strict-9c82ff?style=flat-square"> <img alt="Supervised starter" src="https://img.shields.io/badge/Status-supervised%20starter-60e6de?style=flat-square"></p>
 
+
+**[Usage guide (PDF)](https://drive.google.com/file/d/1sFqMyYIX55mkHGWBtmetD8r7lo2Zdidm/view)** - full walkthrough with screenshots.
+
+
 ## Workspace map
 
 ```text
