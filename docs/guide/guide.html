@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Personal Agent v2.0 Guide</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    ul.task-list{list-style: none;}
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Personal Agent v2.0 Guide</h1>
+</header>
+<h1 id="personal-agent-v2.0-the-complete-guide">Personal Agent v2.0 — The Complete Guide</h1>
+<p><strong>A local-first personal agent for internship hunting, email, signups, scheduling, and web automation — with a human in the loop for everything that matters.</strong></p>
+<p>Version 2.0 · October 2026 · github.com/instinctsetup/personal-agent-starter</p>
+<hr />
+<div style="page-break-before: always">
+
+</div>
+<h2 id="table-of-contents">Table of contents</h2>
+<ol type="1">
+<li>What this is (and what it is not)</li>
+<li>Architecture at a glance</li>
+<li>Installation and first run</li>
+<li>The Chat tab: your command center</li>
+<li>Human-in-the-loop approvals</li>
+<li>Setup cards: connecting services safely</li>
+<li>The Browser tab: a live, shared browser</li>
+<li>The signup engine</li>
+<li>Jobs: the universal applier and the tracker</li>
+<li>Web search without API keys</li>
+<li>Inbox and cold outreach</li>
+<li>Drive and Docs sync</li>
+<li>Vault and model router</li>
+<li>The scheduler</li>
+<li>The git engine</li>
+<li>Telegram and Slack bridges</li>
+<li>LinkedIn assist</li>
+<li>Security model</li>
+<li>Testing</li>
+<li>Honest limits and troubleshooting</li>
+<li>Command reference</li>
+</ol>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="what-this-is-and-what-it-is-not">1. What this is (and what it is not)</h2>
+<p>Personal Agent v2.0 is a <strong>self-hosted web application</strong> that runs entirely on your own machine. You open a browser tab, chat with your agent in plain English, and it does real work: searching the web, driving a browser you can watch and take over, signing up on sites, filling job applications, sending email after you approve it, scheduling recurring tasks, syncing files to Google Drive, and committing code.</p>
+<p>It is <strong>local-first</strong>: the database, the vault, the browser profile, and every log line live under <code>./data/</code> on your disk. Nothing is sent anywhere except the services you explicitly connect.</p>
+<p>It is <strong>human-in-the-loop</strong>: any action that touches the outside world — sending an email, submitting an application — pauses on an approval card. You can read the exact payload, edit every field, approve, or reject. The agent never fires a consequential action on its own.</p>
+<p>It is <strong>not</strong> a cloud service, not a SaaS, and not an autonomous agent you let loose. It is a power tool with a safety catch.</p>
+<h3 id="design-principles">Design principles</h3>
+<ol type="1">
+<li><strong>No fake autonomy.</strong> When something is simulated (email without SMTP configured, search blocked on a datacenter IP), the UI says so, in plain words, next to the result.</li>
+<li><strong>Secrets stay sealed.</strong> Credentials are encrypted with AES-256-GCM before they touch disk. The UI lists usernames, never secrets.</li>
+<li><strong>No evasion.</strong> The built-in browser is plain Chromium. It does not spoof fingerprints, rotate user agents, or defeat CAPTCHAs. When a wall appears, control passes to you.</li>
+<li><strong>Everything is testable.</strong> 79 automated tests cover the vault crypto, OTP extraction, search parsing, approvals, scheduler, git engine, signup engine, drive sync planner, bridges, and more.</li>
+</ol>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="architecture-at-a-glance">2. Architecture at a glance</h2>
+<pre><code>+-------------------------------------------------------------+
+|  Browser (React + Vite + Tailwind, dark UI)                 |
+|  6 tabs: Chat | Browser | Jobs | Drive | Inbox | Vault      |
++------------------------+-----------------+------------------+
+                         |  HTTP + WebSocket
++------------------------v------------------------------------+
+|  Fastify daemon (Node.js + TypeScript)                      |
+|                                                             |
+|  agent core ---- event bus (WS fan-out + SQLite persist)    |
+|     |                                                       |
+|     +-- approvals queue (15-min expiry)                     |
+|     +-- vault (AES-256-GCM)                                 |
+|     +-- search (DuckDuckGo -&gt; Bing fallback)                |
+|     +-- browser engine (Playwright persistent profile)      |
+|     +-- signup engine (Google SSO + OTP assist)             |
+|     +-- job applier (profile-facts-only)                    |
+|     +-- mail (IMAP read + SMTP send)                        |
+|     +-- drive sync (OAuth refresh token, REST)              |
+|     +-- git engine (init/commit/push/GitHub API)            |
+|     +-- scheduler (30s tick, SQLite-backed)                 |
+|     +-- bridges (Telegram long-poll, Slack Events API)      |
++------------------------+-----------------+------------------+
+                         |
+              SQLite (WAL) under ./data/
+              + encrypted vault + browser profile</code></pre>
+<p><strong>Stack note.</strong> The v2.0 spec mentioned Next.js. The shipped stack is a Vite + React single-page app served by the Fastify daemon. For a loopback, desktop-style application, server-side rendering and SEO add nothing, and the Vite build is dramatically lighter and faster. The README states this plainly as a deliberate choice.</p>
+<p><strong>Why SQLite in WAL mode.</strong> Write-ahead logging lets the event bus persist every chat event while the API reads history concurrently, without lock contention. The whole database is one file you can back up by copying.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="installation-and-first-run">3. Installation and first run</h2>
+<h3 id="requirements">Requirements</h3>
+<ul>
+<li>Node.js 20 or newer</li>
+<li>~400 MB disk (Chromium download for browser features)</li>
+<li>Linux, macOS, or WSL2</li>
+</ul>
+<h3 id="steps">Steps</h3>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true"></a><span class="fu">git</span> clone https://github.com/instinctsetup/personal-agent-starter.git</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true"></a><span class="bu">cd</span> personal-agent-starter</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true"></a><span class="fu">git</span> checkout v2</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true"></a><span class="ex">npm</span> install</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true"></a><span class="ex">npx</span> playwright install chromium   # browser features only</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true"></a><span class="ex">npm</span> start</span></code></pre></div>
+<p><code>npm start</code> compiles the daemon, builds the UI, starts the server on <code>http://127.0.0.1:3090</code>, and opens your default browser. From here on, <strong>you never need the terminal for daily use</strong> — everything happens in the web UI.</p>
+<h3 id="first-five-minutes">First five minutes</h3>
+<ol type="1">
+<li>Type <code>help</code> in the chat to see every command.</li>
+<li>Type <code>connect model</code> and add an OpenAI-compatible API key for real AI answers (without one, a clearly-labeled offline mock provider replies).</li>
+<li>Type <code>connect email</code> to add a Gmail address + app password for the inbox and sending.</li>
+<li>Type <code>connect profile</code> and fill your name, email, phone, resume path, college, and graduation year — the job applier uses exactly these facts, nothing else.</li>
+<li>Type <code>track Google - STEP intern</code> and open the <strong>Jobs &amp; Tracker</strong> tab.</li>
+</ol>
+<h3 id="stopping-and-restarting">Stopping and restarting</h3>
+<p>The daemon is a foreground process; Ctrl+C stops it. <code>npm start</code> again resumes — all state (chat history, tracker, vault, jobs) persists in <code>./data/</code>.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="the-chat-tab-your-command-center">4. The Chat tab: your command center</h2>
+<p>The Chat tab is a live command stream. Your messages appear as blue bubbles on the right. The agent replies on the left, and between them you see <strong>tool cards</strong>: collapsible records of every tool the agent ran, with its inputs, duration, and result.</p>
+<figure>
+<img src="01-chat.png" alt="" /><figcaption>The Chat tab with tool cards, a scheduler confirmation, and a pending approval card</figcaption>
+</figure>
+<p>Every assistant action is visible. When the agent searches the web, you see a <code>web.search</code> card. When it schedules a job, a <code>scheduler.add</code> card. When it sends mail, a <code>mail.send</code> card — after you approve it.</p>
+<h3 id="kinds-of-messages">Kinds of messages</h3>
+<ul>
+<li><strong>Text</strong> — normal conversation and results.</li>
+<li><strong>Tool cards</strong> — click to expand and see the exact input and output.</li>
+<li><strong>Approval cards</strong> — amber-bordered, requiring your decision (next chapter).</li>
+<li><strong>Setup cards</strong> — inline forms for connecting services (chapter 6).</li>
+</ul>
+<h3 id="the-event-stream">The event stream</h3>
+<p>Everything in chat is an event on an internal bus, broadcast over a WebSocket and persisted to SQLite. Reload the page and the full history replays. Open the UI on a second browser and both stay in sync live.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="human-in-the-loop-approvals">5. Human-in-the-loop approvals</h2>
+<p>The approval system is the heart of the safety model. Whenever the agent is about to do something consequential — today: sending an email or submitting a job application — it stops and presents an <strong>approval card</strong>.</p>
+<figure>
+<img src="01-chat.png" alt="" /><figcaption>An approval card for sending email: the full payload is visible and editable</figcaption>
+</figure>
+<p>Each card shows:</p>
+<ul>
+<li>the <strong>action type</strong> (e.g. <code>SEND_EMAIL</code>),</li>
+<li>a <strong>human summary</strong> (“Send email to recruiter@acme.com”),</li>
+<li>the <strong>complete payload</strong> as formatted JSON — recipient, subject, body.</li>
+</ul>
+<p>Your three options:</p>
+<ul>
+<li><strong>Approve &amp; Run</strong> — execute exactly what is shown.</li>
+<li><strong>Edit Payload</strong> — the JSON becomes editable; change any field, then approve. The agent executes your edited version.</li>
+<li><strong>Reject</strong> — cancel; the agent acknowledges and moves on.</li>
+</ul>
+<p>Cards <strong>expire after 15 minutes</strong>; an expired card resolves as <code>expired</code> and the action does not run. Resolution is one-shot: a card cannot be approved twice.</p>
+<figure>
+<img src="02-chat-approved.png" alt="" /><figcaption>After approving: the mail.send tool card ran, and the agent honestly reports that nothing was sent because email is not connected yet</figcaption>
+</figure>
+<p>Note the honesty in the screenshot above: the user approved, but because no SMTP credentials were configured, the agent says <em>“Approved. (Email not connected - nothing actually sent.)”</em> — it never pretends a send happened.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="setup-cards-connecting-services-safely">6. Setup cards: connecting services safely</h2>
+<p>Say <code>connect &lt;service&gt;</code> and a <strong>setup card</strong> appears inline in chat: a small form with labeled fields. Secret fields (passwords, tokens) are masked.</p>
+<figure>
+<img src="08-setup-card.png" alt="" /><figcaption>A setup card for connecting GitHub</figcaption>
+</figure>
+<p>Built-in setup cards:</p>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Card</th>
+<th>Fields</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>connect model</code></td>
+<td>Base URL (any OpenAI-compatible endpoint), model name, API key</td>
+</tr>
+<tr class="even">
+<td><code>connect email</code></td>
+<td>IMAP host, SMTP host, email address, app password</td>
+</tr>
+<tr class="odd">
+<td><code>connect drive</code></td>
+<td>OAuth client ID, client secret, refresh token</td>
+</tr>
+<tr class="even">
+<td><code>connect profile</code></td>
+<td>Full name, email, phone, resume path, college, graduation year</td>
+</tr>
+<tr class="odd">
+<td><code>connect github</code></td>
+<td>Username, personal access token</td>
+</tr>
+<tr class="even">
+<td><code>connect telegram</code></td>
+<td>Bot token</td>
+</tr>
+<tr class="odd">
+<td>any other service</td>
+<td>Generic username + secret, stored in the vault</td>
+</tr>
+</tbody>
+</table>
+<p>Where possible, the agent validates live after saving — for a model connection it sends a one-word ping and reports whether it got a reply.</p>
+<p>Secrets go to the <strong>vault</strong> (chapter 13), non-secret settings to the settings table. You can update any card later by saying <code>connect &lt;service&gt;</code> again.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="the-browser-tab-a-live-shared-browser">7. The Browser tab: a live, shared browser</h2>
+<p>The Browser tab shows the agent’s browser in near-real-time: a screenshot stream refreshed every 1.2 seconds.</p>
+<figure>
+<img src="04-browser.png" alt="" /><figcaption>The Browser tab rendering example.com inside the app</figcaption>
+</figure>
+<p>You can drive it yourself:</p>
+<ul>
+<li><strong>URL bar + Go</strong> — navigate.</li>
+<li><strong>Click anywhere on the screenshot</strong> — the click is coordinate-mapped to the page and executed.</li>
+<li><strong>Type into page</strong> — sends keystrokes to the focused field, plus an Enter button.</li>
+</ul>
+<p>And you can take over:</p>
+<ul>
+<li><strong>Take control</strong> — flips a flag that tells the agent’s automation to pause. Solve the CAPTCHA, complete the 2FA, log in once — then flip it back and tell the agent to continue.</li>
+<li>When the agent detects a CAPTCHA or 2FA wall itself, an amber banner appears prompting exactly this.</li>
+</ul>
+<h3 id="the-no-evasion-guarantee">The no-evasion guarantee</h3>
+<p>The browser is a <strong>plain Chromium</strong> with a persistent profile (<code>data/browser-profile/</code>). There is:</p>
+<ul>
+<li>no <code>--disable-blink-features=AutomationControlled</code>,</li>
+<li>no custom user agent (Chromium’s default),</li>
+<li>no <code>navigator.webdriver</code> patching.</li>
+</ul>
+<p>Sites see it exactly as an automated browser. That is a deliberate ethical stance: we do not evade anti-bot systems; we hand you control instead. Login sessions you create manually persist between runs — log into LinkedIn once, and the session is there next week.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="the-signup-engine">8. The signup engine</h2>
+<p>Say <code>sign up on &lt;site&gt; with google</code> and the signup engine takes the shared browser through the site’s Google-SSO flow:</p>
+<ol type="1">
+<li><strong>Navigate</strong> to the site.</li>
+<li><strong>Discover</strong> a “Continue with Google” / “Sign up with Google” control (seven selector strategies, visibility-checked).</li>
+<li><strong>Click through</strong> the Google flow using your stored Google credential (<code>connect google</code>).</li>
+<li><strong>Detect walls.</strong> CAPTCHA or 2FA → the agent asks you to take control, waits up to five minutes, and resumes when you’re done.</li>
+<li><strong>OTP assist.</strong> If the site emails a verification code, say <code>finish signup &lt;site&gt;</code> — the engine scans your connected inbox (fresh mail only) with the OTP extractor and fills the code.</li>
+<li><strong>Record</strong> the outcome in the <code>signups</code> table: site, method, username, status (<code>completed</code>, <code>pending_verification</code>, <code>failed</code>).</li>
+</ol>
+<p>Say <code>signups</code> any time to list them.</p>
+<p>The engine is honest about limits: if no Google-SSO option exists on the page, it says so and shows you what it saw in the Browser tab. It never fabricates a signup.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="jobs-the-universal-applier-and-the-tracker">9. Jobs: the universal applier and the tracker</h2>
+<h3 id="the-applier">The applier</h3>
+<p>Say <code>apply to &lt;job-url&gt;</code>. The applier (battle-tested from v1) opens the posting, finds the application form, and fills it <strong>using only your stored profile facts</strong> — the ones from <code>connect profile</code>. It does not invent answers. Questions it cannot answer are collected and reported to you as a missing-facts list instead of being guessed.</p>
+<p>Before anything is submitted, you get an <strong>approval card</strong> with a human summary of exactly what will be sent. Approve to submit, reject to cancel. Submitted applications are automatically recorded in the tracker with the portal hostname and URL.</p>
+<h3 id="the-tracker">The tracker</h3>
+<figure>
+<img src="03-tracker.png" alt="" /><figcaption>The Jobs &amp; Tracker tab</figcaption>
+</figure>
+<p>The tracker is a full CRUD board: add applications manually (in the tab or with <code>track &lt;Company&gt; - &lt;role&gt;</code>), move them through the pipeline — <strong>Applied → Cold Mailed → Replied</strong>, or <strong>Rejected / Scam Flagged</strong> — attach notes, and export everything as CSV with one click (<code>/api/tracker.csv</code>).</p>
+<p>Statuses were chosen for internship hunting reality: “Cold Mailed” pairs with the outreach composer (chapter 11), and “Scam Flagged” keeps predatory listings visible in hindsight.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="web-search-without-api-keys">10. Web search without API keys</h2>
+<p>Say <code>search &lt;query&gt;</code>. The agent queries <strong>DuckDuckGo’s HTML endpoint</strong> first; if that yields nothing (rate-limited networks return a challenge page), it falls back to <strong>Bing</strong>, decoding Bing’s wrapped redirect URLs back to real destinations.</p>
+<p>Results come back as a numbered list with title, URL, and snippet, plus an expandable <code>web.search</code> tool card.</p>
+<p><strong>Honest limit:</strong> keyless search depends on your IP’s reputation. Datacenter IPs are often challenged; residential connections work reliably. The parsers and the fallback chain are unit-tested against real captured pages, so when the network cooperates, the results are real. When it doesn’t, the agent says “No results” and the README explains why — it never returns invented links.</p>
+<h3 id="scheduled-searching">Scheduled searching</h3>
+<p>Search pairs naturally with the scheduler: <code>every 6 hours search SDE internships 2026</code> keeps a standing query running and posts fresh results into your chat.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="inbox-and-cold-outreach">11. Inbox and cold outreach</h2>
+<h3 id="inbox">Inbox</h3>
+<p>Once <code>connect email</code> is done (Gmail address + app password; IMAP/SMTP hosts default to Gmail), the <strong>Inbox &amp; Outreach</strong> tab lists your recent mail with sender, subject, date, and snippet. <code>inbox</code> or <code>check mail</code> in chat prints the five latest.</p>
+<figure>
+<img src="05-inbox.png" alt="" /><figcaption>The Inbox &amp; Outreach tab before email is connected</figcaption>
+</figure>
+<h3 id="sending">Sending</h3>
+<p>Say <code>send mail to &lt;addr&gt;: &lt;body&gt;</code>. The agent drafts, shows you an <strong>approval card</strong> with the full payload, and only on Approve sends via real SMTP. Without configured email, approval is honored but the agent tells you plainly nothing was sent.</p>
+<h3 id="cold-mail-composer">Cold-mail composer</h3>
+<p>The Inbox tab includes a cold-outreach composer with <code>{{name}}</code> / <code>{{company}}</code> placeholders and a pre-filled, honest template (your college, your batch, your GitHub). Clicking <strong>Draft + review in Chat</strong> routes it through the same approval card — outreach never leaves without your eyes on the final text.</p>
+<p>This pairs with the tracker’s “Cold Mailed” status: send the mail, then flip the application.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="drive-and-docs-sync">12. Drive and Docs sync</h2>
+<p>After <code>connect drive</code> (a one-time Google Cloud OAuth setup yielding a client ID, client secret, and refresh token):</p>
+<ul>
+<li><code>drive</code> lists recent files with links.</li>
+<li><code>upload &lt;path&gt; to drive</code> uploads a file (multipart upload).</li>
+<li><code>upload &lt;path&gt; to drive as doc</code> converts text/markdown into a native Google Doc.</li>
+<li><code>sync &lt;dir&gt; to drive</code> uploads what changed.</li>
+</ul>
+<figure>
+<img src="07-drive.png" alt="" /><figcaption>The Drive &amp; Docs tab</figcaption>
+</figure>
+<p>The sync planner is conservative: it uploads a file only when the name is absent remotely <strong>or</strong> the local mtime is newer than the remote copy. Unchanged files are skipped and reported. The planner is pure and unit-tested.</p>
+<p>OAuth tokens are exchanged over plain REST against Google’s token endpoint — no SDK, no hidden scopes. The refresh token lives in the vault.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="vault-and-model-router">13. Vault and model router</h2>
+<h3 id="the-vault">The vault</h3>
+<figure>
+<img src="06-vault.png" alt="" /><figcaption>The Vault &amp; Scheduler tab</figcaption>
+</figure>
+<p>Every secret — email app password, API keys, bot tokens, service passwords — is encrypted with <strong>AES-256-GCM</strong> before it touches disk:</p>
+<ul>
+<li>A random 256-bit key is generated on first use and stored at <code>data/.vault-key</code> with filesystem mode <code>600</code>.</li>
+<li>Each entry gets its own 96-bit IV; the GCM auth tag makes tampering fail loudly (there is a test that flips ciphertext bytes and expects decryption to throw).</li>
+<li>The UI and chat <strong>list usernames only</strong>. There is no code path that renders a secret.</li>
+</ul>
+<p>Generated passwords (<code>generatePassword</code>, used when the agent creates accounts) are 20 characters drawn from an unambiguous alphabet — no <code>0/O</code>, <code>1/l/I</code> confusion — and unique per call.</p>
+<h3 id="model-router">Model router</h3>
+<p>The vault tab also shows the active model. <code>connect model</code> accepts any OpenAI-compatible endpoint — OpenAI itself, a local Ollama, a company gateway. Without a key, a clearly-labeled <strong>offline mock provider</strong> answers so the UI and flows remain demoable; the mock is always identified as a mock in its replies.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="the-scheduler">14. The scheduler</h2>
+<p>Two natural forms, straight in chat:</p>
+<ul>
+<li><code>every 45 minutes search AI internships</code> — recurring,</li>
+<li><code>at 18:30 tracker</code> — one-shot (today if the time is still ahead, else tomorrow).</li>
+</ul>
+<p>Jobs persist in SQLite, so they survive restarts. A 30-second tick fires due jobs as chat commands — a scheduled search behaves exactly as if you typed it, tool cards and all.</p>
+<p>The <strong>Vault &amp; Scheduler</strong> tab lists every job with its interval, next run, and last run; jobs can be paused or deleted there. <code>jobs</code> in chat prints the same list.</p>
+<p>One-shot jobs disable themselves after firing. Recurring jobs reschedule from their fire time, so a missed tick doesn’t bunch up runs.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="the-git-engine">15. The git engine</h2>
+<p>For the agent’s own projects (and yours):</p>
+<ul>
+<li><code>git init &lt;name&gt;</code> — create a repo under <code>~/repos/&lt;name&gt;</code> with an initial commit.</li>
+<li><code>git status &lt;path&gt;</code> — branch, uncommitted count, last commit.</li>
+<li><code>commit &lt;path&gt; [message]</code> — stage all and commit; reports “nothing to commit” when clean instead of erroring.</li>
+<li><code>push &lt;path&gt; [remote] [branch]</code> — push; a stored GitHub token (<code>connect github</code>) is injected into HTTPS remotes automatically.</li>
+<li><code>create github repo &lt;name&gt;</code> — create the remote via the GitHub API and return its clone URL.</li>
+</ul>
+<p>Commits made by the agent identify themselves (<code>personal-agent &lt;agent@localhost&gt;</code>), so agent-authored history is always distinguishable from yours.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="telegram-and-slack-bridges">16. Telegram and Slack bridges</h2>
+<p>The agent meets you where you already talk.</p>
+<h3 id="telegram">Telegram</h3>
+<ol type="1">
+<li>Create a bot with <span class="citation" data-cites="BotFather">@BotFather</span>, then <code>connect telegram</code> with the token.</li>
+<li><code>POST /api/bridge/telegram/start</code> (or let the daemon auto-start when a token exists).</li>
+<li>Message your bot — the text lands in chat as if you typed it, and the agent’s replies come back to Telegram.</li>
+</ol>
+<p>Long-polling with a 25-second timeout keeps it behind any NAT; no public URL needed.</p>
+<h3 id="slack">Slack</h3>
+<ol type="1">
+<li>Create a Slack app, enable Events, point the Events URL at <code>https://&lt;your-host&gt;/api/slack/events</code>.</li>
+<li>Store the bot token with <code>connect slack</code>, and (recommended) the signing secret with <code>connect slack-signing</code>.</li>
+</ol>
+<p>With a signing secret set, every request is <strong>HMAC-SHA256 verified</strong> with a five-minute replay window — forged or replayed events are rejected with 401. The URL-verification handshake is answered automatically.</p>
+<p>Replies fan out: whichever chat you last messaged from receives the agent’s answers. Multiple bridges can be active at once.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="linkedin-assist">17. LinkedIn assist</h2>
+<p>LinkedIn’s terms discourage automation, so this suite is deliberately gated:</p>
+<ol type="1">
+<li><code>linkedin</code> — shows the full risk note and current state.</li>
+<li><code>linkedin on</code> — enables the feature.</li>
+<li><code>i accept the linkedin risk</code> — the explicit, informed opt-in. Required.</li>
+<li>First <code>linkedin feed</code> opens LinkedIn in the Browser tab for <strong>manual login</strong> (session persists).</li>
+</ol>
+<p>From there, the suite reads your feed at a slow, human pace with <strong>daily caps</strong> carried over from v1. The risk note is not a dark pattern — it says plainly that your account could be restricted even so.</p>
+<p>No phantom liking, no mass-invites, no scraping beyond what you could read yourself.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="security-model">18. Security model</h2>
+<table>
+<colgroup>
+<col style="width: 50%" />
+<col style="width: 50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Asset</th>
+<th>Protection</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Secrets</td>
+<td>AES-256-GCM, per-entry IV, key at <code>data/.vault-key</code> mode 600, never rendered in UI/chat</td>
+</tr>
+<tr class="even">
+<td>Profile file</td>
+<td>Written atomically, mode 600</td>
+</tr>
+<tr class="odd">
+<td>Application log</td>
+<td>Append-only JSONL, mode 600</td>
+</tr>
+<tr class="even">
+<td>Slack events</td>
+<td>HMAC-SHA256 signature + 5-min replay window</td>
+</tr>
+<tr class="odd">
+<td>Approvals</td>
+<td>Required for external effects; 15-min expiry; single-resolution; editable payload</td>
+</tr>
+<tr class="even">
+<td>Database</td>
+<td>Local SQLite file; no network exposure (daemon binds 127.0.0.1 only)</td>
+</tr>
+<tr class="odd">
+<td>Browser</td>
+<td>Plain Chromium, persistent local profile, no stealth</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Threat model in one paragraph.</strong> The daemon binds loopback only, so remote attackers can’t reach the API. Anyone with local access to your user account can read the database but not the vault contents without the vault key — which is why the key file is mode 600 and why you should still treat the whole <code>./data/</code> directory as sensitive (exclude it from backups you don’t control, add it to <code>.gitignore</code> — the repo already does).</p>
+<p><strong>Prompt-injection stance.</strong> Web pages and emails are data, not instructions. The agent never executes commands found in fetched content; only what you type in chat (or a verified bridge message) drives actions, and consequential ones still need your approval card.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="testing">19. Testing</h2>
+<div class="sourceCode" id="cb3"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true"></a><span class="ex">npm</span> test</span></code></pre></div>
+<p><strong>79 tests, all green</strong>, across two generations:</p>
+<ul>
+<li><strong>v1 core (48):</strong> agent intents, apply flow (form filling, confirmation, cancel paths), LinkedIn caps and risk gating, profile matching, reminders, config, features, plugins.</li>
+<li><strong>v2 (31):</strong>
+<ul>
+<li>vault crypto round-trip + tamper detection + password generation,</li>
+<li>OTP and verification-link extraction,</li>
+<li>DuckDuckGo/Bing HTML parsers against captured markup,</li>
+<li>tracker CRUD + CSV export,</li>
+<li>approval lifecycle (approve-with-edit, reject, double-resolve guard, expiry),</li>
+<li>scheduler parsing (intervals, clock times, junk rejection) + job CRUD,</li>
+<li>git engine (real repos in temp dirs: init, commit, clean-tree detection, URL parsing),</li>
+<li>signup records + inbox-OTP freshness logic,</li>
+<li>drive MIME map + sync planner,</li>
+<li>Slack signature verification + event routing,</li>
+<li>cold-mail templating.</li>
+</ul></li>
+</ul>
+<p>Browser-dependent tests launch real headless Chromium — no mocks where it matters.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="honest-limits-and-troubleshooting">20. Honest limits and troubleshooting</h2>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 33%" />
+<col style="width: 33%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Symptom</th>
+<th>Cause</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Search returns “No results”</td>
+<td>Datacenter IP challenged (DDG 202 page)</td>
+<td>Use a residential connection; the fallback chain is tested and will return real results</td>
+</tr>
+<tr class="even">
+<td><code>Email sent</code> never arrives</td>
+<td>Email not connected</td>
+<td><code>connect email</code> — until then sends are simulated and labeled</td>
+</tr>
+<tr class="odd">
+<td>Signup stuck on a wall</td>
+<td>Site blocks automation</td>
+<td>Take control in the Browser tab; the engine waits for you</td>
+</tr>
+<tr class="even">
+<td>LinkedIn “Not logged in”</td>
+<td>Session expired</td>
+<td>Log in again manually in the Browser tab</td>
+</tr>
+<tr class="odd">
+<td><code>git push</code> auth failure</td>
+<td>No GitHub token</td>
+<td><code>connect github</code> with a PAT (repo scope)</td>
+</tr>
+<tr class="even">
+<td>Drive “not connected”</td>
+<td>Missing OAuth trio</td>
+<td><code>connect drive</code> with client ID/secret + refresh token</td>
+</tr>
+<tr class="odd">
+<td>Port already in use</td>
+<td>Old daemon running</td>
+<td><code>pkill -f src2/server</code> and restart</td>
+</tr>
+</tbody>
+</table>
+<p>Everything else the agent can’t do, it says in chat rather than pretending.</p>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="command-reference">21. Command reference</h2>
+<pre><code>help                                    list commands
+connect &lt;service&gt;                       setup card (model, email, drive, github, telegram, profile, any)
+search &lt;query&gt;                          keyless web search (DDG -&gt; Bing)
+open / browse / go to &lt;url&gt;             live browser navigation
+sign up on &lt;site&gt; with google           signup engine (OTP assist, human takeover)
+signups                                 signup history
+finish signup &lt;site&gt;                    pull the emailed code and continue
+apply to &lt;job-url&gt;                      fill profile facts; approval before submit
+track &lt;Company&gt; - &lt;role&gt;                add to tracker
+applications / tracker                  tracker summary
+send mail to &lt;addr&gt;: &lt;body&gt;             draft -&gt; approval card -&gt; real SMTP send
+inbox / check mail                      recent mail
+drive / drive files                     list Drive files
+upload &lt;path&gt; to drive [as doc]         upload (optionally as Google Doc)
+sync &lt;dir&gt; to drive                     upload new/changed files only
+git init &lt;name&gt;                         create local repo under ~/repos
+git status &lt;path&gt;                       branch + changes + last commit
+commit &lt;path&gt; [message]                 stage all + commit
+push &lt;path&gt; [remote] [branch]           push (token auto-injected)
+create github repo &lt;name&gt;               create remote via API
+every &lt;N&gt; &lt;minutes|hours&gt; &lt;command&gt;     recurring job
+at &lt;HH:MM&gt; &lt;command&gt;                    one-shot job
+jobs / schedule                         list jobs
+linkedin / linkedin on                  status + enable
+i accept the linkedin risk              informed opt-in
+linkedin feed                           read feed (capped, paced)
+vault                                   list credential usernames (never secrets)</code></pre>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="appendix-a.-http-api-reference">Appendix A. HTTP API reference</h2>
+<p>The daemon exposes a small JSON API on <code>127.0.0.1:3090</code>. The UI uses exactly these endpoints — there is no privileged back-channel.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Endpoint</th>
+<th>Method</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>/ws</code></td>
+<td>WebSocket</td>
+<td>live event stream (all chat + tool events)</td>
+</tr>
+<tr class="even">
+<td><code>/api/chat</code></td>
+<td>POST</td>
+<td>send a chat message <code>{text}</code>; events stream back over WS</td>
+</tr>
+<tr class="odd">
+<td><code>/api/history</code></td>
+<td>GET</td>
+<td>last 200 persisted events</td>
+</tr>
+<tr class="even">
+<td><code>/api/setup</code></td>
+<td>POST</td>
+<td>submit a setup card <code>{service, values}</code></td>
+</tr>
+<tr class="odd">
+<td><code>/api/approvals/:id</code></td>
+<td>POST</td>
+<td>resolve an approval <code>{decision, payload?}</code></td>
+</tr>
+<tr class="even">
+<td><code>/api/tracker</code></td>
+<td>GET/POST</td>
+<td>list / add applications</td>
+</tr>
+<tr class="odd">
+<td><code>/api/tracker/:id</code></td>
+<td>PATCH/DELETE</td>
+<td>update status/notes, delete</td>
+</tr>
+<tr class="even">
+<td><code>/api/tracker.csv</code></td>
+<td>GET</td>
+<td>CSV export</td>
+</tr>
+<tr class="odd">
+<td><code>/api/vault</code></td>
+<td>GET</td>
+<td>list credential usernames (never secrets)</td>
+</tr>
+<tr class="even">
+<td><code>/api/settings</code></td>
+<td>GET/POST</td>
+<td>read/update non-secret settings</td>
+</tr>
+<tr class="odd">
+<td><code>/api/jobs</code></td>
+<td>GET</td>
+<td>scheduler jobs</td>
+</tr>
+<tr class="even">
+<td><code>/api/jobs/:id/toggle</code></td>
+<td>POST</td>
+<td>pause/resume a job</td>
+</tr>
+<tr class="odd">
+<td><code>/api/jobs/:id</code></td>
+<td>DELETE</td>
+<td>delete a job</td>
+</tr>
+<tr class="even">
+<td><code>/api/signups</code></td>
+<td>GET</td>
+<td>signup history</td>
+</tr>
+<tr class="odd">
+<td><code>/api/mail/inbox</code></td>
+<td>GET</td>
+<td>recent mail (requires <code>connect email</code>)</td>
+</tr>
+<tr class="even">
+<td><code>/api/drive</code></td>
+<td>GET</td>
+<td>Drive files (requires <code>connect drive</code>)</td>
+</tr>
+<tr class="odd">
+<td><code>/api/browser/navigate</code></td>
+<td>POST</td>
+<td><code>{url}</code> — drive the shared browser</td>
+</tr>
+<tr class="even">
+<td><code>/api/browser/screenshot</code></td>
+<td>GET</td>
+<td>current frame (JPEG)</td>
+</tr>
+<tr class="odd">
+<td><code>/api/browser/click</code></td>
+<td>POST</td>
+<td><code>{x, y}</code> in page coordinates</td>
+</tr>
+<tr class="even">
+<td><code>/api/browser/type</code></td>
+<td>POST</td>
+<td><code>{text}</code> keystrokes</td>
+</tr>
+<tr class="odd">
+<td><code>/api/browser/key</code></td>
+<td>POST</td>
+<td><code>{key}</code> e.g. Enter</td>
+</tr>
+<tr class="even">
+<td><code>/api/browser/state</code></td>
+<td>GET</td>
+<td>url, user-control flag, challenge detection</td>
+</tr>
+<tr class="odd">
+<td><code>/api/browser/control</code></td>
+<td>POST</td>
+<td><code>{user: bool}</code> takeover toggle</td>
+</tr>
+<tr class="even">
+<td><code>/api/slack/events</code></td>
+<td>POST</td>
+<td>Slack Events API receiver (HMAC-verified)</td>
+</tr>
+<tr class="odd">
+<td><code>/api/bridge/telegram/start</code></td>
+<td>POST</td>
+<td>start Telegram long-poll</td>
+</tr>
+</tbody>
+</table>
+<p>Example: driving the browser from a script.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true"></a><span class="ex">curl</span> -X POST localhost:3090/api/browser/navigate <span class="kw">\</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true"></a>  <span class="ex">-H</span> <span class="st">&#39;content-type: application/json&#39;</span> -d <span class="st">&#39;{&quot;url&quot;:&quot;example.com&quot;}&#39;</span></span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true"></a><span class="ex">curl</span> localhost:3090/api/browser/screenshot -o frame.jpg</span></code></pre></div>
+<div style="page-break-before: always">
+
+</div>
+<h2 id="appendix-b.-the-data-directory">Appendix B. The data directory</h2>
+<p>Everything the agent owns lives under <code>./data/</code> (override with <code>AGENT_DATA_DIR</code>):</p>
+<pre><code>data/
+  agent-v2.db            SQLite database (WAL): messages, approvals, settings,
+                         vault, applications, jobs, signups
+  agent-v2.db-wal/-shm   WAL sidecars
+  .vault-key             256-bit AES key, mode 600 - guard this file
+  browser-profile/       persistent Chromium profile (cookies, sessions)
+  profile.json           job-hunt profile facts, mode 600
+  applications.jsonl     append-only application log, mode 600</code></pre>
+<h3 id="backup">Backup</h3>
+<p>Stop the daemon, copy the directory, restart. To move machines, copy the whole directory — the vault key travels with it, so keep the copy encrypted.</p>
+<h3 id="reset">Reset</h3>
+<p>Delete the directory (daemon stopped). First run recreates an empty database, a fresh vault key, and a clean browser profile. Your GitHub repos and Drive files are unaffected — they live on their services.</p>
+<h3 id="gitignore"><code>.gitignore</code></h3>
+<p><code>data/</code> is ignored by the repo. Never commit it: the database holds your chat history and the vault key decrypts your credentials.</p>
+<hr />
+<p><em>Built by instinctsetup with Mahesh Thakur (ursthakurmahesh) as co-author. v2.0, October 2026.</em></p>
+</body>
+</html>
