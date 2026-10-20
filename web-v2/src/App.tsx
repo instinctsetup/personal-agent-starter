@@ -836,7 +836,39 @@ function TracesTab() {
           </>
         )}
         {sel && spans.length === 0 && <div className="text-slate-500 text-sm">No spans recorded for this run.</div>}
+        <FileOpsPanel />
       </main>
+    </div>
+  );
+}
+
+/** Tier 3.4: the undo ledger, surfaced - last 10 file moves/renames/cleanups with a one-click reverse. */
+function FileOpsPanel() {
+  const [entries, setEntries] = useState<{ ts: number; kind: string; moves: { from: string; to: string }[] }[]>([]);
+  const [msg, setMsg] = useState("");
+  const load = () => fetch("/api/fileops", { cache: "no-store" }).then(r => r.json()).then(d => setEntries(d.entries || [])).catch(() => {});
+  useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, []);
+  if (!entries.length) return null;
+  const undo = async (ts: number) => {
+    setMsg("");
+    const d = await fetch("/api/fileops/undo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ts }) }).then(r => r.json()).catch(() => ({ ok: false, error: "daemon unreachable" }));
+    setMsg(d.ok ? `Reversed ${d.reversed} move(s)${d.skipped ? `, ${d.skipped} couldn't be reversed` : ""}.` : `Undo failed: ${d.error}`);
+    load();
+  };
+  return (
+    <div className="mt-6 border-t border-slate-800 pt-4">
+      <div className="text-sm font-semibold text-slate-300 mb-2">File operations (undo ledger)</div>
+      {msg && <div className="text-xs text-amber-300 mb-2">{msg}</div>}
+      <div className="space-y-1.5">
+        {entries.map(e => (
+          <div key={e.ts} className="flex items-center gap-3 text-xs">
+            <span className="text-slate-500 shrink-0">{new Date(e.ts).toLocaleString()}</span>
+            <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 shrink-0">{e.kind}</span>
+            <span className="text-slate-400 truncate" title={e.moves.map(m => `${m.from} -> ${m.to}`).join("\n")}>{e.moves.length} file(s): {e.moves[0]?.from.split(/[\\/]/).pop()} {e.moves.length > 1 ? `+${e.moves.length - 1} more` : ""}</span>
+            <button onClick={() => undo(e.ts)} className="ml-auto shrink-0 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-sky-300">Undo</button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

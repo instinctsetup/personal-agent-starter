@@ -480,6 +480,7 @@ export function matchSystemCommand(cmd: string): string | null {
   if (/^linkedin follow ?ups?$/i.test(c) || /^who should i follow up with$/i.test(c)) return "linkedin follow ups";
   if (/^(?:what needs a reply|mail triage|triage|anything needs? (?:a )?(?:reply|response)|who'?s waiting on (?:me|a reply))$/i.test(c)) return "what needs a reply";
   if (/^notes$/i.test(c)) return "notes";
+  if (/^(?:file history|file ops|what files did i (?:move|rename|delete|change))$/i.test(c)) return "file history";
   if (/^(?:version|what version|which version)(?: are you(?: running)?)?$/i.test(c)) return "version";
   const mOpen = c.match(/^open ([a-z0-9 ]{2,25})$/i);
   if (mOpen && isKnownApp(mOpen[1].trim()) && !/[./]/.test(mOpen[1])) return `open ${mOpen[1].trim()}`;
@@ -775,6 +776,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- what's on my clipboard / copy <text> - read or set the clipboard",
         "- open <app> - launch an allow-listed app (chrome, vscode, notepad, calculator, explorer, spotify); open <url> still browses",
         "- rename files in <dir> from <text> to <text> - batch rename with an approval card + undo last rename",
+        "- file history / undo file op <N> - every file move with one-line reversal (also on the Traces tab)",
         "- clean up my downloads - archives files older than 30 days into _archive/<month>/ (approval card shows every move; daily-capped; undo last cleanup)",
         "- watch <folder> [for new <ext>] / watching / unwatch <folder> - get pinged the moment a new file lands (survives restarts)",
         "- routine <name> = <cmd> + <cmd> + ... / routines / run <name> / delete routine <name> - one phrase replays your whole checklist (schedule it: at 08:00 run morning)",
@@ -1616,6 +1618,28 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       }
       return;
     }
+    if (/^(?:file history|what files did i (?:move|rename|delete|change)|file ops)$/i.test(cmd)) {
+      const { ledgerList } = await import("./fileops.js");
+      const entries = ledgerList(10);
+      say(runId, entries.length
+        ? "Last file operations (undo with `undo file op <number>`):\n" + entries.map((e, i) => `${i + 1}. [${new Date(e.ts).toLocaleString()}] ${e.kind}: ${e.moves.length} file(s) - ${e.moves[0] ? `${e.moves[0].from} -> ${e.moves[0].to}` : ""}${e.moves.length > 1 ? ` (+${e.moves.length - 1} more)` : ""}`).join("\n") + "\nThe Traces tab shows the same list with an Undo button."
+        : "No file operations yet - batch renames and downloads cleanups land here, each one undoable.");
+      return;
+    }
+    const mUndoOp = cmd.match(/^undo file op(?:eration)?\s+(\d+)$/i);
+    if (mUndoOp) {
+      try {
+        const { ledgerList, undoEntry } = await import("./fileops.js");
+        const entry = ledgerList(10)[Number(mUndoOp[1]) - 1];
+        if (!entry) { say(runId, `No file operation #${mUndoOp[1]} - say \`file history\` for the list.`); return; }
+        const r = await toolCall(runId, "fs.undo_entry", { ts: entry.ts }, async () => undoEntry(entry.ts));
+        say(runId, `Reversed ${r.reversed} move(s)${r.skipped ? `, ${r.skipped} couldn't be reversed (file gone or name taken)` : ""}.`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't undo that file operation.");
+      }
+      return;
+    }
+
     if (/^undo last rename$/i.test(cmd)) {
       try {
         const r = await toolCall(runId, "fs.undo_rename", {}, async () => undoLast("rename"));

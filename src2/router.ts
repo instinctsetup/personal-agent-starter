@@ -52,6 +52,7 @@ export const COMMAND_GRAMMAR = `
 - what needs a reply   (inbox triage: the few mails actually waiting on him)
 - watch <folder> | watched folders | stop watching <folder>   (folder watcher with undo)
 - clean up downloads | undo file cleanup   (safe file organizer with an undo ledger)
+- file history | undo file op <N>   ("what files did I move" - the undo ledger view)
 - every morning <command> | routines | delete routine <name>   (named routines)
 - read text in <image-path>   (OCR: text from a screenshot or scan)
 - version   (which build of the app is running)

@@ -27,6 +27,42 @@ export function ledgerLast(kind?: string): { ts: number; kind: string; moves: Mo
   return null;
 }
 
+export type LedgerEntry = { ts: number; kind: string; moves: Move[] };
+
+/** The last N ledger entries, newest first - the "what did I move/rename/delete?" view. */
+export function ledgerList(limit = 10): LedgerEntry[] {
+  if (!existsSync(LEDGER)) return [];
+  const lines = readFileSync(LEDGER, "utf8").trim().split("\n").filter(Boolean);
+  const out: LedgerEntry[] = [];
+  for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
+    try { out.push(JSON.parse(lines[i])); } catch { /* skip corrupt line */ }
+  }
+  return out;
+}
+
+/** Reverse one specific ledger entry by timestamp (from the file-history view / Traces tab). */
+export function undoEntry(ts: number): { reversed: number; skipped: number } {
+  const entry = ledgerList(100).find((e) => e.ts === ts);
+  if (!entry) throw new Error("That file operation is no longer in the ledger (already undone?).");
+  let reversed = 0;
+  let skipped = 0;
+  const remaining: Move[] = [];
+  for (const mv of [...entry.moves].reverse()) {
+    if (!existsSync(mv.to) || existsSync(mv.from)) { remaining.push(mv); skipped++; continue; }
+    mkdirSync(dirname(mv.from), { recursive: true });
+    renameSync(mv.to, mv.from);
+    reversed++;
+  }
+  const lines = readFileSync(LEDGER, "utf8").trim().split("\n").filter(Boolean);
+  const idx = lines.findIndex((l) => { try { return JSON.parse(l).ts === ts; } catch { return false; } });
+  if (idx >= 0) {
+    if (remaining.length) lines[idx] = JSON.stringify({ ts: entry.ts, kind: entry.kind, moves: remaining });
+    else lines.splice(idx, 1);
+    writeFileSync(LEDGER, lines.length ? lines.join("\n") + "\n" : "", "utf8");
+  }
+  return { reversed, skipped };
+}
+
 /** Execute moves, refusing to clobber anything. Returns the moves actually applied. */
 export function applyMoves(moves: Move[], kind: string): Move[] {
   const done: Move[] = [];

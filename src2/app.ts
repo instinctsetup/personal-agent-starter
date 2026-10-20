@@ -115,6 +115,15 @@ export async function buildApp() {
   });
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
+  app.get("/api/fileops", async () => ({ entries: (await import("./fileops.js")).ledgerList(10) }));
+  app.post("/api/fileops/undo", async (req) => {
+    const { undoEntry } = await import("./fileops.js");
+    const ts = Number((req.body as any)?.ts);
+    if (!Number.isFinite(ts)) return { ok: false, error: "missing ts" };
+    try { return { ok: true, ...undoEntry(ts) }; }
+    catch (e: any) { return { ok: false, error: String(e?.message || e) }; }
+  });
+
   app.get("/api/traces", async () => {
     const { recentRuns } = await import("./trace.js");
     return { runs: recentRuns(20) };
