@@ -20,6 +20,15 @@ npm start          # builds the UI + daemon, opens http://127.0.0.1:8787
 Requires Node 22+. First run: `npx playwright install chromium` for the browser features.
 No terminal needed after that - daily use is the web UI.
 
+### Windows note (no compiler needed)
+
+`npm install` works on a plain Windows machine with no C++ build tools: the pinned
+`better-sqlite3@^12` ships prebuilt binaries for Windows x64 on Node 22. (The v13
+line of better-sqlite3 dropped prebuilt binaries, so stay on v12.) If you upgrade
+better-sqlite3 past v12 and `npm install` fails with "Could not find any Visual
+Studio installation", install the [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+with the "Desktop development with C++" workload - or keep better-sqlite3 on v12.
+
 ## Stack
 
 - **UI**: React + Vite + Tailwind (dark), 6-tab workspace. The spec mentioned Next.js;
