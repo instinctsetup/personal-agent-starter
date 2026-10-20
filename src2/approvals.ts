@@ -9,7 +9,7 @@ export type Approval = {
   id: string; action: string; summary: string; payload: Record<string, unknown>;
 };
 
-const waiters = new Map<string, (a: { status: string; payload: any }) => void>();
+const waiters = new Map<string, { resolve: (a: { status: string; payload: any }) => void; timer: ReturnType<typeof setTimeout> }>();
 
 export function requestApproval(action: string, summary: string, payload: Record<string, unknown>, runId = newRunId()): Approval {
   const id = randomBytes(6).toString("hex");
@@ -24,13 +24,13 @@ export function waitApproval(id: string, timeoutMs = EXPIRY_MS): Promise<{ statu
   const row = db.prepare("SELECT status, payload FROM approvals WHERE id = ?").get(id) as any;
   if (row && row.status !== "pending") return Promise.resolve({ status: row.status, payload: JSON.parse(row.payload) });
   return new Promise((resolve) => {
-    waiters.set(id, resolve);
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (waiters.delete(id)) {
         db.prepare("UPDATE approvals SET status = 'expired', resolved_ts = ? WHERE id = ? AND status = 'pending'").run(Date.now(), id);
         resolve({ status: "expired", payload: null });
       }
     }, timeoutMs);
+    waiters.set(id, { resolve, timer });
   });
 }
 
@@ -41,7 +41,7 @@ export function resolveApproval(id: string, status: "approved" | "rejected", edi
   db.prepare("UPDATE approvals SET status = ?, payload = ?, resolved_ts = ? WHERE id = ?")
     .run(status, JSON.stringify(payload), Date.now(), id);
   const waiter = waiters.get(id);
-  if (waiter) { waiters.delete(id); waiter({ status, payload }); }
+  if (waiter) { waiters.delete(id); clearTimeout(waiter.timer); waiter.resolve({ status, payload }); }
   return true;
 }
 

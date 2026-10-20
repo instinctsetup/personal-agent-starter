@@ -156,7 +156,7 @@ function EventView({ e }: { e: Event }) {
     return <ToolCard e={e} />;
   }
   if (e.kind === "approval") {
-    return <ApprovalCard e={e} />;
+    return e.action === "send_email" ? <EmailApprovalCard e={e} /> : <ApprovalCard e={e} />;
   }
   if (e.kind === "setup_form") {
     return <SetupCard e={e} />;
@@ -181,6 +181,51 @@ function ToolCard({ e }: { e: Event }) {
           {JSON.stringify({ input: e.input, result: e.result, error: e.error }, null, 2)}
         </pre>
       )}
+    </div>
+  );
+}
+
+function EmailApprovalCard({ e }: { e: Event }) {
+  const p = (e.payload || {}) as { to?: string; from?: string; subject?: string; body?: string };
+  const [f, setF] = useState({ to: p.to || "", from: p.from || "", subject: p.subject || "", body: p.body || "" });
+  const [editing, setEditing] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const decide = async (decision: "approved" | "rejected") => {
+    const r = await fetch(`/api/approvals/${e.id}`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify(decision === "approved" ? { decision, payload: f } : { decision }),
+    });
+    const d = await r.json();
+    setDone(d.ok ? (decision === "approved" ? "sent ✓" : "cancelled - nothing sent") : "already resolved");
+  };
+  const set = (k: keyof typeof f) => (ev: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setF({ ...f, [k]: ev.target.value });
+  const row = (label: string, k: keyof typeof f) => (
+    <div className="flex items-center gap-2">
+      <span className="w-14 shrink-0 text-xs text-slate-500">{label}</span>
+      {editing
+        ? <input value={f[k]} onChange={set(k)} className="flex-1 bg-[#0d1117] border border-slate-700 rounded-lg px-2 py-1 text-sm outline-none focus:border-emerald-500" />
+        : <span className="text-slate-200 text-sm">{f[k] || <span className="text-slate-500">(none)</span>}</span>}
+    </div>
+  );
+  return (
+    <div className="max-w-[75%] rounded-xl border border-emerald-700/60 bg-emerald-950/20 p-4">
+      <div className="text-xs uppercase tracking-wide text-emerald-400 mb-2">Email draft · nothing sends until you press Send</div>
+      {done ? <div className="text-xs text-slate-400 italic">{done}</div> : (<>
+        <div className="space-y-1.5 mb-2">
+          {row("To", "to")}
+          {row("From", "from")}
+          {row("Subject", "subject")}
+          {editing
+            ? <textarea value={f.body} onChange={set("body")} rows={8}
+                className="w-full bg-[#0d1117] border border-slate-700 rounded-lg p-2 text-sm outline-none focus:border-emerald-500" />
+            : <div className="bg-[#0d1117] border border-slate-800 rounded-lg p-3 text-sm whitespace-pre-wrap">{f.body}</div>}
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => decide("approved")} className="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-4 py-1.5 text-xs font-semibold">Send</button>
+          <button onClick={() => setEditing(!editing)} className="bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-1.5 text-xs">{editing ? "Preview" : "Edit"}</button>
+          <button onClick={() => decide("rejected")} className="bg-red-800 hover:bg-red-700 rounded-lg px-3 py-1.5 text-xs">Cancel</button>
+        </div>
+      </>)}
     </div>
   );
 }

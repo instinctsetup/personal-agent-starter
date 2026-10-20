@@ -68,6 +68,75 @@ export async function withProgress<T>(runId: string, label: string, fn: () => Pr
   }
 }
 
+
+const ADDR_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+/** Detect "send/write/compose ... to <address>" phrased any way, without catching inbox questions. */
+export function parseSendIntent(t: string): { to: string; from?: string; explicitBody?: string } | null {
+  const lower = t.trim().toLowerCase();
+  // read-ish openings are inbox questions, never sends
+  if (/^(?:check|read|show|see|any|list|did|has|have|what|whats|what's|do i|are there)\b/.test(lower)) return null;
+  const sendish = /\b(send|write|compose|draft|shoot|drop|forward|reply)\b/i.test(t) || /\b(?:e-?)?mail to\b/i.test(t) || /\bemail to\b/i.test(t);
+  if (!sendish) return null;
+  const mFrom = t.match(/\bfrom\s+([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/i);
+  const from = mFrom?.[1];
+  const addrs = t.match(ADDR_RE) || [];
+  const to = addrs.find((a) => a.toLowerCase() !== from?.toLowerCase());
+  if (!to) return null;
+  const esc = to.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const mBody = t.match(new RegExp(`to\\s+${esc}\\s*:\\s*([\\s\\S]+)$`, "i"));
+  return { to, from, explicitBody: mBody?.[1]?.trim() || undefined };
+}
+
+async function profileSenderName(): Promise<string> {
+  try {
+    const { ProfileStore } = await import("../src/tools/profile.js");
+    const prof: any = new ProfileStore(DATA_DIR).get();
+    return [prof?.firstName, prof?.lastName].filter(Boolean).join(" ");
+  } catch { return ""; }
+}
+
+/** Model-drafted subject + body from the user's plain-English request. */
+async function draftWithModel(p: ReturnType<typeof provider>, request: string, to: string, senderName: string): Promise<{ subject: string; body: string }> {
+  const system = [
+    "You draft emails for the user. Write in first person, as the user.",
+    "Style: short (under 120 words), polite, direct, plain text. Match the user's casual but respectful tone.",
+    "Never invent facts: use only what the request and the sender info below state. No fake achievements, companies, or names.",
+    "If the request is a referral ask, write a short, specific referral request.",
+    "Use a single [bracketed placeholder] only for a detail that is required and unknown.",
+    senderName ? `Sign off as ${senderName}.` : "No sender name is known - skip the signature name.",
+    "Reply in exactly this format:",
+    "Subject: <one line>",
+    "",
+    "<body paragraphs>",
+  ].join("\n");
+  const raw = await p.chat([
+    { role: "system", content: system },
+    { role: "user", content: `Recipient: ${to}\nSender name: ${senderName || "unknown"}\nThe user's request (their words): ${request}` },
+  ], { maxTokens: 700 });
+  const m = raw.match(/subject:\s*(.+)/i);
+  if (!m) return { subject: "(no subject)", body: raw.trim() || "(empty draft - edit me)" };
+  const body = raw.slice(raw.indexOf(m[0]) + m[0].length).replace(/^\s*\n/, "").trim();
+  return { subject: m[1].trim().slice(0, 140) || "(no subject)", body: body || "(empty draft - edit me)" };
+}
+
+/** No-model fallback: an honest plain draft from the user's own words, meant to be edited in the card. */
+export function fallbackDraft(request: string, _to: string, senderName = ""): { subject: string; body: string } {
+  const ask = request
+    .replace(/^\s*(?:can u|can you|could you|please|pls|hey|hi)\b/i, "")
+    .replace(/\b(?:send|write|compose|draft|shoot|drop)\b[\s\S]{0,40}?\b(?:an?\s+)?(?:e-?)?mail\b/i, "")
+    .replace(/\bto\s+[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const referral = /refer/i.test(request);
+  const subject = referral ? "Referral request" : "Quick note";
+  const cleaned = ask.replace(/^(?:asking|to ask)\s+for\s+/i, "").trim();
+  const line = referral
+    ? `I wanted to ask if you could refer me${cleaned ? ` - ${cleaned}` : ""}.`
+    : cleaned || request;
+  return { subject, body: `Hi,\n\n${line}\n\nThanks,${senderName ? `\n${senderName}` : ""}` };
+}
+
 export async function handleUserMessage(text: string): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
@@ -84,7 +153,7 @@ export async function handleUserMessage(text: string): Promise<void> {
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
         "- apply to <job-url> - fill profile facts only, approval before submit",
         "- track <Company> - <role> / applications - application tracker",
-        "- send mail to <addr>: <body> - drafts, you approve before sending",
+        "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
         "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
@@ -137,6 +206,76 @@ export async function handleUserMessage(text: string): Promise<void> {
       const app = await toolCall(runId, "tracker.add", { company: mTrack[1], role: mTrack[2] }, async () =>
         addApplication({ company: mTrack[1].trim(), role: mTrack[2]?.trim() }));
       say(runId, `Tracked: ${app.company}${app.role ? ` - ${app.role}` : ""} (${app.status}).`);
+      return;
+    }
+
+    // ---- plain-English email send (draft -> Send/Edit/Cancel card -> SMTP only on Send) ----
+    const sendIntent = parseSendIntent(t);
+    if (sendIntent) {
+      const { listMailAccounts, findMailAccount, mailConfigured } = await import("./mail.js");
+      const accounts = listMailAccounts();
+      if (sendIntent.from && !findMailAccount(sendIntent.from)) {
+        say(runId, `${sendIntent.from} isn't a connected mail account, so I can't send from it.${accounts.length ? ` Connected: ${accounts.map((a) => a.user).join(", ")}.` : " Connect one with `connect email`."}`);
+        return;
+      }
+      const from = sendIntent.from || accounts[0]?.user || "";
+      let subject: string;
+      let body: string;
+      if (sendIntent.explicitBody) {
+        subject = "Hello from your agent";
+        body = sendIntent.explicitBody;
+      } else {
+        const senderName = await profileSenderName();
+        const p = provider();
+        if (p.offline) {
+          ({ subject, body } = fallbackDraft(t, sendIntent.to, senderName));
+          say(runId, "No model is connected, so this is a plain draft from your own words - tap Edit in the card to polish it. (`connect gemini` gives you model-drafted emails.)");
+        } else {
+          try {
+            ({ subject, body } = await toolCall(runId, "mail.draft", { to: sendIntent.to }, async () =>
+              withProgress(runId, "Drafting the email", () => draftWithModel(p, t, sendIntent.to, senderName))));
+          } catch {
+            ({ subject, body } = fallbackDraft(t, sendIntent.to, senderName));
+            say(runId, "The model didn't come back with a draft, so I made a plain one from your words - tap Edit in the card to polish it.");
+          }
+        }
+      }
+      const payload = { to: sendIntent.to, from, subject, body };
+      const card = requestApproval("send_email", `Send email from ${from || "(not connected)"} to ${sendIntent.to}`, payload, runId);
+      const others = accounts.filter((a) => a.user.toLowerCase() !== from.toLowerCase());
+      say(runId, [
+        `Draft ready - nothing is sent until you tap Send.`,
+        `To: ${sendIntent.to}`,
+        `From: ${from || "(email not connected)"}`,
+        `Subject: ${subject}`,
+        "",
+        body,
+        others.length ? `\nAlso connected: ${others.map((a) => a.user).join(", ")} - tap Edit in the card and change From to switch accounts.` : "",
+      ].join("\n"), { approval_id: card.id });
+      const res = await waitApproval(card.id);
+      if (res.status !== "approved") {
+        say(runId, res.status === "expired" ? "Approval expired - nothing sent." : "Cancelled - nothing sent.");
+        return;
+      }
+      const pl = res.payload as any;
+      if (!mailConfigured()) {
+        say(runId, "Approved, but email isn't connected - nothing was sent. Say `connect email` first.");
+        return;
+      }
+      if (pl.from && !findMailAccount(String(pl.from))) {
+        const { listMailAccounts: relist } = await import("./mail.js");
+        say(runId, `Not sent: ${pl.from} isn't a connected mail account. Connected: ${relist().map((a) => a.user).join(", ") || "none"}.`);
+        return;
+      }
+      try {
+        const result = await toolCall(runId, "mail.send", { to: pl.to, from: pl.from }, async () => {
+          const { sendMail } = await import("./mail.js");
+          return sendMail(pl.to, pl.subject || "(no subject)", pl.body || "", { from: pl.from });
+        });
+        say(runId, `Email sent to ${pl.to} from ${result.from}.`);
+      } catch (err: any) {
+        say(runId, `Couldn't send: ${err?.message || err}. Nothing was sent - check the mail settings (\`connect email\`) and try again.`);
+      }
       return;
     }
 
@@ -352,26 +491,6 @@ export async function handleUserMessage(text: string): Promise<void> {
         return br.navigate(mOpen[1]);
       });
       say(runId, `Opened ${url}. Watch it in the Browser tab - flip "take control" there any time to solve a CAPTCHA or 2FA yourself.`);
-      return;
-    }
-
-    const mMail = t.match(/^send (?:an? )?(?:e-?)?mail to (\S+@\S+)(?:[:\s]+(.+))?$/is);
-    if (mMail) {
-      const payload = { to: mMail[1], subject: "Hello from your agent", body: mMail[2] || "(empty body - edit me)" };
-      const card = requestApproval("send_email", `Send email to ${mMail[1]}`, payload, runId);
-      say(runId, "Draft ready. Review the card above - you can edit every field before approving.", { approval_id: card.id });
-      const res = await waitApproval(card.id);
-      if (res.status === "approved") {
-        const result = await toolCall(runId, "mail.send", res.payload, async () => {
-          const { mailConfigured, sendMail } = await import("./mail.js");
-          if (!mailConfigured()) return { simulated: true, note: "email not connected - nothing left this machine" };
-          const p = res.payload as any;
-          return sendMail(p.to, p.subject || "(no subject)", p.body || "");
-        });
-        say(runId, (result as any)?.simulated === false ? `Email sent to ${(res.payload as any).to}.` : "Approved. (Email not connected - nothing actually sent. Use `connect email`.)");
-      } else {
-        say(runId, res.status === "expired" ? "Approval expired - nothing sent." : "Rejected - nothing sent.");
-      }
       return;
     }
 
