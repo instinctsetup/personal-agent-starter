@@ -4,6 +4,7 @@ import { emit, newRunId, onEvent, type AgentEvent } from "./bus.js";
 import { requestApproval, waitApproval } from "./approvals.js";
 import { checkCap, recordAction, capStatus, setCap, DEFAULT_CAPS } from "./caps.js";
 import { createPlan, getPlan, listPlans, cancelPlan, runPlan, type Plan } from "./plans.js";
+import { addMemory, listMemories, forgetMemory, forgetAll, memoryContext } from "./memory.js";
 import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
@@ -334,6 +335,28 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
   }
 }
 
+/** Fire-and-forget: pull durable facts/preferences out of an exchange. Never blocks the reply; secrets are filtered in addMemory. */
+function extractMemories(runId: string, userText: string, agentReply: string) {
+  if (provider().offline) return;
+  const msgs = [
+    { role: "system" as const, content: 'You extract durable user facts and preferences from a chat exchange. Reply with a strict JSON array (possibly empty) of {"kind":"fact"|"preference","text":"..."}. Keep only things worth remembering next week: name, city, college, skills, preferences, constraints, recurring context. Never secrets, never one-off requests, never guesses. JSON array only.' },
+    { role: "user" as const, content: `User said: """${userText.slice(0, 500)}"""\nAssistant replied: """${agentReply.slice(0, 500)}"""` },
+  ];
+  modelRace(runId, msgs, undefined, true)
+    .then((raw) => {
+      const m = raw.match(/\[[\s\S]*\]/);
+      if (!m) return;
+      const arr = JSON.parse(m[0]);
+      if (!Array.isArray(arr)) return;
+      for (const item of arr.slice(0, 5)) {
+        if (item && (item.kind === "fact" || item.kind === "preference") && typeof item.text === "string") {
+          addMemory(item.kind, item.text, "extracted");
+        }
+      }
+    })
+    .catch(() => { /* memory is best-effort, never user-facing */ });
+}
+
 export async function handleUserMessage(text: string, routed = false): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
@@ -438,7 +461,10 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
           if (phase === "failed") say(runId, `Step ${i + 1} "${s.cmd}" failed: ${s.error || "unknown error"}.`);
         },
       });
-      if (done.status === "done") say(runId, `Plan ${done.id} finished - all ${done.steps.length} step(s) done.`);
+      if (done.status === "done") {
+        say(runId, `Plan ${done.id} finished - all ${done.steps.length} step(s) done.`);
+        addMemory("summary", `Completed plan: "${done.goal}" (${done.steps.map((s) => s.cmd).join("; ")})`, "system");
+      }
       else if (done.status === "paused") say(runId, `Plan ${done.id} is paused at the failed step. Fix the cause and say \`resume plan ${done.id}\`, or \`cancel plan ${done.id}\`.`);
       return done;
     };
@@ -447,7 +473,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
   try {
     // LLM intent router: plain English -> canonical commands (regex cascade stays as offline fallback + executor)
     if (!routed && !provider().offline) {
-      const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)));
+      const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
       if (route && route.kind === "clarify") {
         pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
         say(runId, route.question);
@@ -464,9 +490,13 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return;
       }
       if (route && route.kind === "chat") {
-        // the model explicitly said conversation: skip the cascade, answer freely
-        const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, [{ role: "user", content: t }])));
-        say(runId, reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.");
+        // the model explicitly said conversation: skip the cascade, answer freely (with memory in context)
+        const mem = memoryContext();
+        const chatMsgs = [...(mem ? [{ role: "system" as const, content: mem }] : []), { role: "user" as const, content: t }];
+        const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
+        const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
+        say(runId, out);
+        extractMemories(runId, t, out);
         return;
       }
       // route null (model down/unparseable): fall through to the regex cascade
@@ -486,6 +516,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- board <pipeline|inbox|overview> / boards - live shareable dashboards; unshare <kind> kills the link",
         "- plan <goal> / plans / resume plan <id> / cancel plan <id> - durable multi-step plans with retries + self-correction",
         "- caps / cap <action> <N> - per-day limits on sends and applications",
+        "- remember <fact> / memories / forget <id> - durable memory across sessions (secrets stay in the vault)",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -590,6 +621,32 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     if (mCancelPlan) {
       const p = cancelPlan(mCancelPlan[1]);
       say(runId, p ? `Plan ${p.id} cancelled - remaining steps skipped. Its checkpoints stay on record.` : `No plan with id ${mCancelPlan[1]}.`);
+      return;
+    }
+
+    // ---- memory --------------------------------------------------------------
+    const mRemember = cmd.match(/^remember(?:\s+that)?\s+([\s\S]+)$/i);
+    if (mRemember) {
+      const m = addMemory("fact", mRemember[1], "user");
+      say(runId, m ? `Noted - I'll remember that. (id ${m.id}; "forget ${m.id}" removes it)` : "That looks like a secret (password, card, OTP, key) - I keep those in the vault only, never in memory.");
+      return;
+    }
+    if (lower === "memories" || lower === "memory" || lower === "what do you remember") {
+      const rows = listMemories(30);
+      say(runId, rows.length
+        ? `I remember ${rows.length} thing(s):\n` + rows.map((r) => `- (${r.kind}) ${r.text}  [${r.id}]`).join("\n") + `\nSay "forget <id>" to remove one, "forget everything" to wipe.`
+        : "Nothing stored yet. Say \"remember <fact>\" - I also pick up durable facts and preferences as we chat.");
+      return;
+    }
+    const mForget = cmd.match(/^forget\s+([\s\S]+)$/i);
+    if (mForget) {
+      if (/^everything$|^all$/i.test(mForget[1].trim())) {
+        const n = forgetAll();
+        say(runId, `Done - ${n} memor${n === 1 ? "y" : "ies"} wiped.`);
+      } else {
+        const n = forgetMemory(mForget[1].trim());
+        say(runId, n ? `Forgot ${n} memor${n === 1 ? "y" : "ies"}.` : `Nothing matched "${mForget[1].trim()}". Say \`memories\` to see the ids.`);
+      }
       return;
     }
 
@@ -980,8 +1037,12 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       say(runId, `I didn't recognise that as a command, and no AI model is connected yet, so I can't chat freely. Type \`connect gemini\` to add a free model, or \`help\` to see what I can do.`);
       return;
     }
-    const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, [{ role: "user", content: t }])));
-    say(runId, reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.");
+    const mem = memoryContext();
+    const chatMsgs = [...(mem ? [{ role: "system" as const, content: mem }] : []), { role: "user" as const, content: t }];
+    const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
+    const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
+    say(runId, out);
+    extractMemories(runId, t, out);
   } catch (err: any) {
     emit({ ts: Date.now(), run_id: runId, kind: "error", role: "agent", text: `Something failed: ${err?.message || err}` });
   }

@@ -36,6 +36,7 @@ export const COMMAND_GRAMMAR = `
 - plan <goal>   (durable multi-step plan: checkpointed, retried, resumable - use for "do X then Y then Z" goals)
 - plans | resume plan <id> | cancel plan <id>
 - caps | cap <action> <N>   (daily limits)
+- remember <fact> | memories | forget <id>   (durable memory)
 - board <pipeline|inbox|overview>   (live shareable dashboard link)
 - boards   (list dashboard links)
 - unshare <pipeline|inbox|overview>   (kill the share link, mint a new one)
@@ -44,7 +45,7 @@ export const COMMAND_GRAMMAR = `
 
 import type { ChatMessage } from "../src/providers/types.js";
 
-export function routerPrompt(userText: string): ChatMessage[] {
+export function routerPrompt(userText: string, memory = ""): ChatMessage[] {
   return [
     {
       role: "system",
@@ -64,7 +65,9 @@ export function routerPrompt(userText: string): ChatMessage[] {
         "- Keep the user's actual meaning; do not add steps they did not ask for.",
         "- A request to do several things returns several commands in order.",
         "- Output JSON only. No prose, no markdown fences.",
-      ].join("\n"),
+        "",
+        memory,
+      ].filter(Boolean).join("\n"),
     },
     { role: "user", content: `Message: ${userText}` },
   ];
@@ -95,9 +98,9 @@ export function parseModelRoute(raw: string): Route | null {
 type ChatFn = (messages: ChatMessage[]) => Promise<string>;
 
 /** Ask the model race to route one user message. Null = unusable, caller falls back to the regex cascade. */
-export async function routeWithModel(text: string, chat: ChatFn): Promise<Route | null> {
+export async function routeWithModel(text: string, chat: ChatFn, memory = ""): Promise<Route | null> {
   try {
-    const raw = await chat(routerPrompt(text));
+    const raw = await chat(routerPrompt(text, memory));
     return parseModelRoute(raw);
   } catch {
     return null; // model trouble must never block the user's words
