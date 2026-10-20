@@ -15,7 +15,8 @@ import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
 import { listInbox, mailConfigured } from "./mail.js";
 import { listSignups } from "./signup.js";
 import { handleSlackEvent, verifySlackSignature, startTelegramBridge } from "./bridge.js";
-import { registerAuth } from "./auth.js";
+import { registerAuth, isAuthed, authEnabled } from "./auth.js";
+import { getBoard, boardData, renderBoardPage } from "./boards.js";
 import { getCredential } from "./vault.js";
 
 export async function buildApp() {
@@ -190,6 +191,23 @@ export async function buildApp() {
     return { ok: true, user_control: br.isUserControlling() };
   });
   app.post("/api/browser/close", async () => { await br.closeBrowser(); return { ok: true }; });
+
+
+  // --- boards: live shareable dashboards (owner session or ?k= share token; auth checked here, not in the /api hook) ---
+  const boardAllowed = (req: any, b: { share_token: string }) =>
+    !authEnabled() || isAuthed(req) || String((req.query as any)?.k || "") === b.share_token;
+  app.get("/boards/:id.json", async (req, reply) => {
+    const b = getBoard((req.params as any).id);
+    if (!b) return reply.code(404).send({ error: "not found" });
+    if (!boardAllowed(req, b)) return reply.code(401).send({ error: "authentication required" });
+    return { id: b.id, title: b.title, ...(await boardData(b.kind) as any) };
+  });
+  app.get("/boards/:id", async (req, reply) => {
+    const b = getBoard((req.params as any).id);
+    if (!b) return reply.code(404).type("text/html").send("<h1>Board not found</h1>");
+    if (!boardAllowed(req, b)) return reply.code(401).type("text/html").send("<h1>This board link is not valid.</h1>");
+    return reply.type("text/html").send(renderBoardPage(b, String((req.query as any)?.k || "")));
+  });
 
   const uiDir = join(process.cwd(), "web-v2", "dist");
   if (existsSync(uiDir)) {

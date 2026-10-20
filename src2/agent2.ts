@@ -430,6 +430,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
         "- apply to <job-url> - fill profile facts only, approval before submit",
         "- track <Company> - <role> / applications - application tracker",
+        "- board <pipeline|inbox|overview> / boards - live shareable dashboards; unshare <kind> kills the link",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -493,6 +494,32 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       say(runId, results.length
         ? `Top ${results.length} results for "${q}":\n` + results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.snippet}`).join("\n")
         : `No results for "${q}".`, { results });
+      return;
+    }
+
+    // ---- boards: live shareable dashboards ---------------------------------
+    const boardUrl = (b: { id: string; share_token: string }) => {
+      const base = (getSetting("public_url") || `http://localhost:${process.env.PORT || 8787}`).replace(/\/$/, "");
+      return `${base}/boards/${b.id}?k=${b.share_token}`;
+    };
+    const mUnshare = cmd.match(/^unshare\s+(pipeline|inbox|overview)$/i);
+    if (mUnshare) {
+      const { ensureBoard, rotateShareToken } = await import("./boards.js");
+      const kind = mUnshare[1].toLowerCase() as any;
+      rotateShareToken(ensureBoard(kind).id);
+      say(runId, `Done - every old ${kind} link is dead. New link: ${boardUrl(ensureBoard(kind))}`);
+      return;
+    }
+    const mBoard = cmd.match(/^boards?$/i) || cmd.match(/^board\s+(pipeline|inbox|overview)$/i);
+    if (mBoard) {
+      const { ensureBoard, boardKinds } = await import("./boards.js");
+      const kind = (mBoard[1] || "").toLowerCase();
+      if (kind) {
+        const b = ensureBoard(kind as any);
+        say(runId, `Your live ${b.title}: ${boardUrl(b)} - it updates itself as things change. Anyone with the link can view it; "unshare ${kind}" kills it.`);
+      } else {
+        say(runId, "Live dashboards (they update themselves):\n" + boardKinds().map((k) => `- ${k}: ${boardUrl(ensureBoard(k))}`).join("\n"));
+      }
       return;
     }
 
