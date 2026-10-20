@@ -2,6 +2,20 @@
 // Sanity-checks the local install and reports plain-language results.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { installAutostart, removeAutostart, isAutostartInstalled, isWindows } from './autostart.mjs';
+
+// --install-autostart / --remove-autostart: manage the Windows per-user
+// logon task, print a plain-language result, and exit.
+if (process.argv.includes('--install-autostart')) {
+  const r = installAutostart(process.cwd());
+  console.log(`${r.ok ? 'ok  ' : 'FAIL'} autostart - ${r.detail}`);
+  process.exit(r.ok ? 0 : 1);
+}
+if (process.argv.includes('--remove-autostart')) {
+  const r = removeAutostart();
+  console.log(`${r.ok ? 'ok  ' : 'FAIL'} autostart - ${r.detail}`);
+  process.exit(r.ok ? 0 : 1);
+}
 
 const checks = [];
 const ok = (name, pass, detail = '') => checks.push({ name, pass, detail });
@@ -23,6 +37,9 @@ if (existsSync('data/settings.json')) {
   } catch {
     ok('settings parse', false, 'settings.json is not valid JSON');
   }
+}
+if (isWindows()) {
+  ok('autostart at sign-in', isAutostartInstalled(), 'npm run doctor --install-autostart enables it');
 }
 let failed = 0;
 for (const c of checks) {
