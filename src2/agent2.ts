@@ -22,6 +22,7 @@ import { systemInfo, clipboardRead, clipboardWrite, launchApp, isKnownApp } from
 import { planRename, planDownloadsCleanup, applyMoves, undoLast, downloadsDir, fmtMoves, type Move } from "./fileops.js";
 import { startWatch, stopWatch, listWatchers } from "./watcher.js";
 import { setRoutine, getRoutine, listRoutines, deleteRoutine } from "./routines.js";
+import { ocrImage, readScreenText } from "./ocr.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -691,6 +692,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- clean up my downloads - archives files older than 30 days into _archive/<month>/ (approval card shows every move; daily-capped; undo last cleanup)",
         "- watch <folder> [for new <ext>] / watching / unwatch <folder> - get pinged the moment a new file lands (survives restarts)",
         "- routine <name> = <cmd> + <cmd> + ... / routines / run <name> / delete routine <name> - one phrase replays your whole checklist (schedule it: at 08:00 run morning)",
+        "- what does my screen say / read the text in <image> - local OCR (nothing leaves the laptop)",
       ].join("\n"));
       return;
     }
@@ -1534,6 +1536,27 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     const mUnwatch = cmd.match(/^unwatch\s+(.+)$/i);
     if (mUnwatch) {
       say(runId, stopWatch(mUnwatch[1].trim()) ? "Stopped watching that folder." : "I wasn't watching that. Say `watching` to see the list.");
+      return;
+    }
+
+    // ---- screen & image text (local OCR) ------------------------------------
+    if (/^(?:what does (?:my )?screen say|what'?s on (?:my )?screen|read (?:my )?screen)$/i.test(cmd)) {
+      try {
+        const text = await toolCall(runId, "screen.ocr", {}, () => readScreenText());
+        say(runId, text ? `Your screen says:\n\n${text.slice(0, 2000)}` : "I couldn't find any readable text on screen.");
+      } catch (err: any) {
+        say(runId, err?.message || "Screen capture isn't available here.");
+      }
+      return;
+    }
+    const mOcrFile = cmd.match(/^(?:read|ocr)\s+(?:the text in\s+)?(.+\.(?:png|jpe?g|bmp|gif|webp|tiff?))$/i);
+    if (mOcrFile) {
+      try {
+        const text = await toolCall(runId, "image.ocr", { path: mOcrFile[1] }, () => ocrImage(mOcrFile[1]));
+        say(runId, text ? `Text in ${mOcrFile[1]}:\n\n${text.slice(0, 2000)}` : "No readable text found in that image.");
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't read that image.");
+      }
       return;
     }
 
