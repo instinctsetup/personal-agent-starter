@@ -19,6 +19,7 @@ const ICONS: Record<string, string> = {
   vault: "M6 11V7a6 6 0 0112 0v4M5 11h14v9H5zM12 15v2",
   send: "M4 12l16-7-5 16-4-6-7-3z",
   tool: "M14 7a4 4 0 105.4 5.4L21 14l-3 3-2-2-3 3-2-2 3-3-2-2 3-3 1.4 1.4A4 4 0 0014 7z",
+  traces: "M4 19V10m5 9V5m5 14v-7m5 7v-4M2 21h20",
 };
 function Icon({ name, size = 16, className = "" }: { name: string; size?: number; className?: string }) {
   return (
@@ -36,6 +37,7 @@ const TABS = [
   { id: "drive", label: "Drive & Docs", icon: "drive" },
   { id: "inbox", label: "Inbox & Outreach", icon: "inbox" },
   { id: "vault", label: "Vault & Scheduler", icon: "vault" },
+  { id: "traces", label: "Traces", icon: "traces" },
 ] as const;
 
 type SysSettings = { model?: string; model_provider?: string; model_key_set?: boolean; email_configured?: boolean; email_user?: string; linkedin_on?: boolean };
@@ -120,7 +122,8 @@ export default function App() {
         {tab === "browser" && <BrowserTab />}
         {tab === "inbox" && <InboxTab />}
         {tab === "drive" && <DriveTab />}
-        {!["chat", "jobs", "vault", "browser", "inbox", "drive"].includes(tab) && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
+        {tab === "traces" && <TracesTab />}
+        {!["chat", "jobs", "vault", "browser", "inbox", "drive", "traces"].includes(tab) && <PlaceholderTab name={TABS.find(t => t.id === tab)!.label} />}
       </main>
     </div>
   );
@@ -679,6 +682,136 @@ function DriveTab() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ================= TRACES ================= */
+type RunSummary = { run_id: string; first_ts: number; last_ts: number; duration_ms: number; spans: number; errors: number; tools: string[] };
+type Span = { id: string; run_id: string; parent_id: string | null; name: string; start_ts: number; end_ts: number | null; status: string; attrs: Record<string, any>; depth: number };
+
+const fmtDur = (ms: number) => ms < 1000 ? `${Math.max(1, Math.round(ms))}ms` : `${(ms / 1000).toFixed(1)}s`;
+
+function attrLine(s: Span): string {
+  if (s.status === "error" && s.attrs.error) return String(s.attrs.error);
+  if (s.attrs.winner) return `winner: ${s.attrs.winner}`;
+  if (s.attrs.cmd) return String(s.attrs.cmd);
+  if (s.attrs.input && typeof s.attrs.input === "object") {
+    const e = Object.entries(s.attrs.input)[0];
+    if (e) return `${e[0]}: ${String(e[1]).slice(0, 60)}`;
+  }
+  return "";
+}
+
+function TracesTab() {
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [sel, setSel] = useState<string | null>(null);
+  const [spans, setSpans] = useState<Span[]>([]);
+  const [updated, setUpdated] = useState("");
+
+  useEffect(() => {
+    let dead = false;
+    const tick = async () => {
+      try {
+        const d = await fetch("/api/traces", { cache: "no-store" }).then(r => r.json());
+        if (dead) return;
+        const list: RunSummary[] = d.runs || [];
+        setRuns(list);
+        setSel(s => (s && list.some(r => r.run_id === s)) ? s : list[0]?.run_id ?? null);
+        setUpdated(new Date().toLocaleTimeString());
+      } catch { /* daemon briefly unreachable */ }
+      if (!dead) setTimeout(tick, 4000);
+    };
+    tick();
+    return () => { dead = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!sel) { setSpans([]); return; }
+    let dead = false;
+    const tick = async () => {
+      let wait = 4000;
+      try {
+        const d = await fetch(`/api/traces/${encodeURIComponent(sel)}`, { cache: "no-store" }).then(r => r.json());
+        if (dead) return;
+        const list: Span[] = d.spans || [];
+        setSpans(list);
+        if (list.some(s => s.status === "running")) wait = 1500; // live run: refresh faster
+      } catch { /* keep last view */ }
+      if (!dead) setTimeout(tick, wait);
+    };
+    tick();
+    return () => { dead = true; };
+  }, [sel]);
+
+  const now = Date.now();
+  const t0 = spans.length ? Math.min(...spans.map(s => s.start_ts)) : 0;
+  const t1 = spans.length ? Math.max(...spans.map(s => s.end_ts || now), t0 + 1) : 1;
+  const range = t1 - t0;
+
+  return (
+    <div className="flex h-full">
+      <aside className="w-72 shrink-0 border-r border-slate-800 flex flex-col">
+        <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Recent runs</h2>
+          <span className="text-[10px] text-slate-500">updated {updated || "…"}</span>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {runs.length === 0 && (
+            <div className="p-6 text-center text-slate-500 text-xs">
+              No runs traced yet.<br />Chat with the agent - every tool call, model race and plan step is recorded here.
+            </div>
+          )}
+          {runs.map(r => (
+            <button key={r.run_id} onClick={() => setSel(r.run_id)}
+              className={`w-full text-left px-4 py-3 border-b border-slate-800/60 hover:bg-slate-800/40 ${sel === r.run_id ? "bg-slate-800/60 border-l-2 border-l-sky-400" : ""}`}>
+              <div className="flex items-center gap-2">
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.errors > 0 ? "bg-red-400" : "bg-emerald-400"}`} />
+                <span className="text-xs text-slate-400">{new Date(r.first_ts).toLocaleTimeString()}</span>
+                <span className="ml-auto text-xs text-slate-500">{fmtDur(r.duration_ms)}</span>
+              </div>
+              <div className="mt-1 text-[13px] truncate">{r.tools.slice(0, 3).join(" · ") || "run"}{r.tools.length > 3 ? ` +${r.tools.length - 3}` : ""}</div>
+              <div className="mt-0.5 text-[10px] text-slate-500">
+                {r.spans} span{r.spans === 1 ? "" : "s"}{r.errors > 0 ? <span className="text-red-400"> · {r.errors} error{r.errors === 1 ? "" : "s"}</span> : ""}
+              </div>
+            </button>
+          ))}
+        </div>
+      </aside>
+      <main className="flex-1 min-w-0 overflow-y-auto p-6">
+        {!sel && <div className="text-slate-500 text-sm">Select a run on the left.</div>}
+        {sel && spans.length > 0 && (
+          <>
+            <div className="flex items-baseline gap-3 mb-4">
+              <h2 className="text-lg font-semibold">Run timeline</h2>
+              <span className="text-xs text-slate-500 font-mono">{sel}</span>
+              <span className="text-xs text-slate-500 ml-auto">total {fmtDur(range)}</span>
+            </div>
+            <div className="space-y-1">
+              {spans.map(s => {
+                const left = ((s.start_ts - t0) / range) * 100;
+                const width = Math.max(((s.end_ts || now) - s.start_ts) / range * 100, 0.6);
+                const line = attrLine(s);
+                return (
+                  <div key={s.id} className="flex items-center gap-3">
+                    <div className="w-64 shrink-0 truncate text-xs" style={{ paddingLeft: s.depth * 16 }} title={s.name}>
+                      <span className={s.depth > 0 ? "text-slate-400" : "text-slate-200 font-medium"}>{s.depth > 0 ? "↳ " : ""}{s.name}</span>
+                    </div>
+                    <div className="flex-1 relative h-5 bg-slate-800/40 rounded overflow-hidden">
+                      <div className={`absolute top-0.5 bottom-0.5 rounded ${s.status === "error" ? "bg-red-500/80" : s.status === "running" ? "bg-amber-400/80 animate-pulse" : "bg-sky-500/70"}`}
+                        style={{ left: `${left}%`, width: `${width}%` }} />
+                    </div>
+                    <div className="w-20 shrink-0 text-right text-[11px] text-slate-500">{fmtDur((s.end_ts || now) - s.start_ts)}</div>
+                    <div className={`w-56 shrink-0 truncate text-[11px] ${s.status === "error" ? "text-red-400" : "text-slate-500"}`} title={line}>{line}</div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 text-[11px] text-slate-600">Tip: say <span className="font-mono text-slate-400">traces</span> in chat for the text version, or <span className="font-mono text-slate-400">trace {sel.slice(0, 12)}…</span> for this run's tree.</div>
+          </>
+        )}
+        {sel && spans.length === 0 && <div className="text-slate-500 text-sm">No spans recorded for this run.</div>}
+      </main>
     </div>
   );
 }
