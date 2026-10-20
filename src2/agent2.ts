@@ -156,6 +156,29 @@ let pendingFacts: { questions: string[]; resolve: (a: Record<string, string> | n
 let pendingHunt: { results: import("./search.js").SearchResult[]; expires: number } | null = null;
 
 
+/** Parse "linkedin message <profile-url>: <text>" / "message <url> on linkedin saying ..." / "connect with <url> on linkedin note: ...". */
+export function parseLinkedinAsk(cmd: string): { kind: "message" | "invite"; url: string; text: string } | null {
+  const url = cmd.match(/https?:\/\/[\w.]*linkedin\.com\/[^\s]+/i)?.[0]?.replace(/[.,:;!)]+$/, "");
+  if (!url) return null;
+  const rest = cmd.replace(url, " ").trim();
+  const kind = /\b(message|msg|dm)\b/i.test(rest) ? "message" as const
+    : /\b(connect|invite|add)\b/i.test(rest) ? "invite" as const
+    : null;
+  if (!kind) return null;
+  const after = cmd.slice(cmd.indexOf(url) + url.length).replace(/^\s*(?:,)?\s*(?:on\s+linkedin\s+)?(?:saying|that|to say|note\s*:|:)\s*/i, "").trim();
+  if (kind === "message" && !after) return null; // a DM needs its text
+  return { kind, url, text: after };
+}
+
+/** LinkedInTools bound to the shared data dir, with the v2 risk-gate mirrored into its store. */
+async function linkedinTools() {
+  const { LinkedInTools } = await import("../src/tools/linkedin.js");
+  const { Store } = await import("../src/config.js");
+  const store = new Store(DATA_DIR);
+  store.saveSettings({ linkedin: { enabled: true, riskAccepted: true } } as any);
+  return new LinkedInTools(store, DATA_DIR);
+}
+
 /** The apply flow for one posting: fill profile facts, ask missing ones in chat, approval card before submit. */
 async function runApplyFlow(runId: string, url: string): Promise<void> {
   say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
@@ -268,6 +291,7 @@ export async function handleUserMessage(text: string): Promise<void> {
         "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
         "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
         "- linkedin / linkedin on / linkedin feed - LinkedIn assist (risk-gated)",
+        "- linkedin message <profile-url>: <text> / connect with <profile-url> on linkedin - approval-gated, daily-capped",
         "- vault - list stored credentials (secrets never shown)",
       ].join("\n"));
       return;
@@ -423,6 +447,40 @@ export async function handleUserMessage(text: string): Promise<void> {
       });
       if (msgs === null) say(runId, "Email isn't connected yet, so I can't read your inbox. Type `connect email` to set it up.");
       else say(runId, msgs.length ? msgs.map((m: any) => `- ${m.subject} (${m.from})`).join("\n") : "Inbox is empty.");
+      return;
+    }
+
+    // ---- linkedin messaging / invites (risk-gated, approval-gated, capped) ----
+    const liAsk = parseLinkedinAsk(cmd);
+    if (liAsk) {
+      if (getSetting("linkedin_enabled") !== "1" || getSetting("linkedin_risk_accepted") !== "1") {
+        say(runId, `LinkedIn assist is not enabled yet. Say \`linkedin\` to see the risk note, \`linkedin on\`, then \`i accept the linkedin risk\` first.`);
+        return;
+      }
+      const action = liAsk.kind === "message" ? "linkedin_message" : "linkedin_invite";
+      const summary = liAsk.kind === "message"
+        ? `LinkedIn DM to ${liAsk.url}:\n\n${liAsk.text}`
+        : `LinkedIn invite to ${liAsk.url}${liAsk.text ? ` with note:\n\n${liAsk.text}` : " (no note)"}`;
+      const card = requestApproval(action, summary, { url: liAsk.url, text: liAsk.text }, runId);
+      say(runId, "Review the card above - Approve sends it through your logged-in LinkedIn session (slow-paced, daily-capped), Reject cancels.", { approval_id: card.id });
+      const res = await waitApproval(card.id);
+      if (res.status !== "approved") {
+        say(runId, res.status === "expired" ? "Approval expired - nothing sent." : "Cancelled - nothing sent.");
+        return;
+      }
+      try {
+        const detail = await toolCall(runId, `linkedin.${liAsk.kind === "message" ? "message" : "invite"}`, res.payload, async () => {
+          const tools = await linkedinTools();
+          const p = res.payload as any;
+          const r = liAsk.kind === "message"
+            ? await tools.sendMessage(p.url, p.text || "", async () => true)
+            : await tools.sendInvite(p.url, p.text || "", async () => true);
+          return r.detail;
+        });
+        say(runId, String(detail));
+      } catch (err: any) {
+        say(runId, err?.name === "LinkedInStopped" ? `Stopped: ${err.message}` : `Couldn't do that on LinkedIn: ${err?.message || err}. If LinkedIn wants a login or check, open it in the Browser tab and do it once by hand.`);
+      }
       return;
     }
 
