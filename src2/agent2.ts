@@ -12,6 +12,7 @@ import { MockProvider } from "../src/providers/mock.js";
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
+import { routeWithModel } from "./router.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
 export const FALLBACK_GEMINI_MODEL = "gemini-2.5-flash"; // stable free-tier fallback if the default is not found
@@ -160,7 +161,7 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
  * first good answer, abort the slower calls, and say which model won. If every
  * racer fails (e.g. all of Google is 503ing), wait a beat and race once more.
  */
-export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, quiet = false): Promise<string> {
   const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS); // web provider joins round 2 only - see loop below
   if (racers.length === 0) return provider().chat(messages, opts); // offline/mock path
   if (racers.length === 1) return racers[0].run(new AbortController().signal);
@@ -190,7 +191,7 @@ export async function modelRace(runId: string, messages: ChatMessage[], opts?: {
       }
     });
     if (result) {
-      say(runId, `Raced ${racers.length} free models in parallel - ${result.label} answered first.`);
+      if (!quiet) say(runId, `Raced ${roundRacers.length} free models in parallel - ${result.label} answered first.`);
       return result.text;
     }
     if (round < RACE_ROUNDS) await sleep(RACE_BACKOFF_MS);
@@ -256,6 +257,7 @@ let pendingFacts: { questions: string[]; resolve: (a: Record<string, string> | n
 
 /** A hunt shortlist: the next "apply to 1,3" / "apply all" picks from it (15 min expiry). */
 let pendingHunt: { results: import("./search.js").SearchResult[]; expires: number } | null = null;
+let pendingClarify: { question: string; original: string; expires: number } | null = null;
 
 
 /** Parse "linkedin message <profile-url>: <text>" / "message <url> on linkedin saying ..." / "connect with <url> on linkedin note: ...". */
@@ -322,7 +324,7 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
   }
 }
 
-export async function handleUserMessage(text: string): Promise<void> {
+export async function handleUserMessage(text: string, routed = false): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
@@ -376,7 +378,47 @@ export async function handleUserMessage(text: string): Promise<void> {
     }
   }
 
+  // an LLM-router clarify question is open - this message answers it
+  if (pendingClarify) {
+    if (Date.now() > pendingClarify.expires || /^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
+      pendingClarify = null;
+      if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) { say(runId, "Cancelled."); return; }
+    } else {
+      const answered = pendingClarify;
+      pendingClarify = null;
+      text = `${answered.original}. Answer to the question "${answered.question}": ${t}`;
+    }
+  }
+
   try {
+    // LLM intent router: plain English -> canonical commands (regex cascade stays as offline fallback + executor)
+    if (!routed && !provider().offline) {
+      const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)));
+      if (route && route.kind === "clarify") {
+        pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
+        say(runId, route.question);
+        return;
+      }
+      if (route && route.kind === "commands" && route.commands.length) {
+        if (route.commands.length > 1) {
+          say(runId, `Plan, ${route.commands.length} steps:\n${route.commands.map((c, i) => `${i + 1}) ${c}`).join("\n")}`);
+        }
+        for (const [i, c] of route.commands.entries()) {
+          if (route.commands.length > 1) emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label: `Step ${i + 1}/${route.commands.length}: ${c}`, text: `Step ${i + 1}/${route.commands.length}: ${c}` }, false);
+          await handleUserMessage(c, true);
+        }
+        if (route.commands.length > 1) emit({ ts: Date.now(), run_id: runId, kind: "status", state: "done", label: "plan", text: "plan done" }, false);
+        return;
+      }
+      if (route && route.kind === "chat") {
+        // the model explicitly said conversation: skip the cascade, answer freely
+        const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, [{ role: "user", content: t }])));
+        say(runId, reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.");
+        return;
+      }
+      // route null (model down/unparseable): fall through to the regex cascade
+    }
+
     if (lower === "help" || lower === "commands") {
       say(runId, [
         "What I understand (plain English works - \"can u apply to <url>\" is fine):",
