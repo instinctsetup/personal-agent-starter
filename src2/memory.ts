@@ -28,7 +28,7 @@ export function looksSecret(text: string): boolean {
   return SECRET_PATTERNS.some((re) => re.test(text));
 }
 
-export function addMemory(kind: "fact" | "preference" | "summary", text: string, source = "user"): Memory | null {
+export function addMemory(kind: "fact" | "preference" | "summary" | "note", text: string, source = "user"): Memory | null {
   const clean = text.trim().replace(/\s+/g, " ");
   if (!clean || clean.length < 3) return null;
   if (looksSecret(clean)) return null;
@@ -53,7 +53,7 @@ export function forgetAll(): number {
 
 /** The bounded block prepended to model prompts. Newest first, preferences before facts before summaries. */
 export function memoryContext(maxChars = 1500): string {
-  const rank = { preference: 0, fact: 1, summary: 2 } as Record<string, number>;
+  const rank = { preference: 0, fact: 1, summary: 2, note: 3 } as Record<string, number>;
   const rows = listMemories(60).sort((a, b) => rank[a.kind] - rank[b.kind] || b.ts - a.ts);
   const lines: string[] = [];
   let used = 0;

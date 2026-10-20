@@ -668,6 +668,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- plan <goal> / plans / resume plan <id> / cancel plan <id> - durable multi-step plans with retries + self-correction",
         "- caps / cap <action> <N> - per-day limits on sends and applications",
         "- remember <fact> / memories / forget <id> - durable memory across sessions (secrets stay in the vault)",
+        "- note: <text> / notes - quick timestamped notes; remind me at 5pm to <text> / remind me in 30 minutes to <text> - one-shot nudges",
         "- local / local setup / local on|off - private on-device models via Ollama (auto-detects your GPU, cloud race as fallback)",
         "- skills - the full tool manifest (what I can do, risk tier, caps and approval gates per tool)",
         "- traces / trace <run-id> - structured run logs: every tool call as a timed span tree",
@@ -881,6 +882,59 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     if (mRemember) {
       const m = addMemory("fact", mRemember[1], "user");
       say(runId, m ? `Noted - I'll remember that. (id ${m.id}; "forget ${m.id}" removes it)` : "That looks like a secret (password, card, OTP, key) - I keep those in the vault only, never in memory.");
+      return;
+    }
+
+    // ---- notes & reminders -------------------------------------------------
+    const mNote = cmd.match(/^note:?\s+([\s\S]+)$/i);
+    if (mNote) {
+      const m = addMemory("note", mNote[1], "user");
+      say(runId, m ? `Noted. (id ${m.id}; "forget ${m.id}" removes it)` : "That looks like a secret - I keep those in the vault only, never in notes.");
+      return;
+    }
+    if (/^notes$/i.test(cmd)) {
+      const notes = listMemories(200).filter((x) => x.kind === "note");
+      say(runId, notes.length
+        ? "Your notes:\n" + notes.map((x) => `- [${new Date(x.ts).toLocaleString()}] ${x.text} (id ${x.id})`).join("\n")
+        : "No notes yet. Try `note: ask recruiter about remote work`.");
+      return;
+    }
+
+    // scheduler-fired reminder: "remind: <text>" is the one-shot job's command
+    const mReminderFire = cmd.match(/^remind:\s*([\s\S]+)$/i);
+    if (mReminderFire) {
+      say(runId, `Reminder: ${mReminderFire[1]}`);
+      return;
+    }
+
+    // "remind me at 5pm to follow up" / "remind me at 17:30 to call" / "remind me in 30 minutes to stretch"
+    const mRemind = cmd.match(/^remind me\s+(at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?|in\s+(\d+)\s*(minutes?|mins?|hours?|hrs?))\s+(?:to\s+)?([\s\S]+)$/i);
+    if (mRemind) {
+      let target: number;
+      if (mRemind[5]) {
+        const n = Number(mRemind[5]);
+        target = Date.now() + n * (/^h/i.test(mRemind[6]) ? 3_600_000 : 60_000);
+      } else {
+        let h = Number(mRemind[2]);
+        const mins = Number(mRemind[3] || "0");
+        const ampm = (mRemind[4] || "").toLowerCase();
+        if (ampm === "pm" && h < 12) h += 12;
+        if (ampm === "am" && h === 12) h = 0;
+        const d = new Date();
+        d.setHours(h, mins, 0, 0);
+        if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
+        target = d.getTime();
+      }
+      const text = mRemind[7].trim();
+      if (!text) {
+        say(runId, "Remind you to do what? Try `remind me at 5pm to follow up with the recruiter`.");
+        return;
+      }
+      const job = await toolCall(runId, "scheduler.add", { command: `remind: ${text}`, nextRun: target }, async () => {
+        const { addJob } = await import("./scheduler.js");
+        return addJob(`remind: ${text}`, target, null);
+      });
+      say(runId, `I'll remind you ${new Date(target).toLocaleString()}: "${text}".`, { job_id: job.id });
       return;
     }
     if (lower === "memories" || lower === "memory" || lower === "what do you remember") {
