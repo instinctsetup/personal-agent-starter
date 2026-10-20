@@ -135,6 +135,7 @@ const RACE_ROUNDS = 2;
 import type { ChatMessage } from "../src/providers/types.js";
 import { providerOf, recordAttempt, markWon, quotaToday, formatQuota, setQuotaCap } from "./quota.js";
 import { APP_VERSION } from "./version.js";
+import { saveState, clearState, loadStates } from "./convstate.js";
 
 interface Racer { label: string; run: (signal: AbortSignal) => Promise<string>; }
 
@@ -328,6 +329,29 @@ export function schedulerChannel(jobId: string | number): ChannelId {
   return `scheduler:${jobId}:${Date.now()}`;
 }
 
+/** Restart recovery: reload durable pending state into the in-memory maps.
+ *  Hunt shortlists and clarify questions restore fully (they are plain data -
+ *  an answered clarify re-routes the original command exactly as before).
+ *  Form fact-questions held a live callback that cannot survive a restart,
+ *  so those are re-asked as a plain message instead of silently forgotten. */
+export function restoreConversationState(sayFn: (text: string) => void): number {
+  let restored = 0;
+  for (const row of loadStates()) {
+    if (Date.now() > row.expires) { clearState(row.channel, row.kind); continue; }
+    if (row.kind === "hunt" && Array.isArray(row.payload?.results)) {
+      pendingHuntByChannel.set(row.channel, { results: row.payload.results, expires: row.expires });
+      restored++;
+    } else if (row.kind === "clarify" && row.payload?.question) {
+      pendingClarifyByChannel.set(row.channel, { question: row.payload.question, original: row.payload.original || "", expires: row.expires });
+      restored++;
+    } else if (row.kind === "facts" && Array.isArray(row.payload?.questions)) {
+      clearState(row.channel, row.kind);
+      sayFn(`The app restarted while I was waiting for: ${row.payload.questions.join(", ")}. The form run didn't survive the restart - please re-run your last command.`);
+    }
+  }
+  return restored;
+}
+
 
 /** Parse "linkedin message <profile-url>: <text>" / "message <url> on linkedin saying ..." / "connect with <url> on linkedin note: ...". */
 export function parseLinkedinAsk(cmd: string): { kind: "message" | "invite"; url: string; text: string } | null {
@@ -376,9 +400,10 @@ async function runApplyFlow(runId: string, url: string, channel: ChannelId): Pro
         ].join("\n"));
         const answers = await new Promise<Record<string, string> | null>((resolve) => {
           const timer = setTimeout(() => {
-            if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); resolve(null); }
+            if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); clearState(channel, "facts"); resolve(null); }
           }, 10 * 60 * 1000);
           pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
+          saveState(channel, "facts", { questions: qs }, Date.now() + 10 * 60_000); // restart-safe: re-asked on boot (the live callback is not)
         });
         if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
         return answers ?? {};
@@ -546,6 +571,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   if (pendingFacts) {
     const p = pendingFacts;
     pendingFactsByChannel.delete(channel);
+    clearState(channel, "facts");
     clearTimeout(p.timer);
     if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
       p.resolve(null);
@@ -567,11 +593,13 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   if (pendingHunt) {
     if (Date.now() > pendingHunt.expires) {
       pendingHuntByChannel.delete(channel);
+      clearState(channel, "hunt");
     } else {
       const sel = cmd.match(/^(?:apply(?:\s+to)?\s+)?(all|\d+(?:\s*[, ]\s*\d+)*)$/i);
       if (sel) {
         const results = pendingHunt.results;
         pendingHuntByChannel.delete(channel);
+        clearState(channel, "hunt");
         const picks = sel[1].toLowerCase() === "all"
           ? results
           : [...new Set(sel[1].split(/[\s,]+/).filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= results.length).map((n) => results[n - 1]);
@@ -592,10 +620,12 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   if (pendingClarify) {
     if (Date.now() > pendingClarify.expires || /^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
       pendingClarifyByChannel.delete(channel);
+      clearState(channel, "clarify");
       if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) { say(runId, "Cancelled."); return; }
     } else {
       const answered = pendingClarify;
       pendingClarifyByChannel.delete(channel);
+      clearState(channel, "clarify");
       text = `${answered.original}. Answer to the question "${answered.question}": ${t}`;
     }
   }
@@ -674,6 +704,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       }, Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
       if (route && route.kind === "clarify") {
         pendingClarifyByChannel.set(channel, { question: route.question, original: t, expires: Date.now() + 10 * 60_000 });
+        saveState(channel, "clarify", { question: route.question, original: t }, Date.now() + 10 * 60_000);
         say(runId, route.question);
         return;
       }
@@ -791,7 +822,9 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       for (const r of shortlist) {
         if (!tracked.has(r.url)) addApplication({ company: host(r.url), role: r.title.slice(0, 80), portal: host(r.url), url: r.url, status: "Scouted" });
       }
-      pendingHuntByChannel.set(channel, { results: shortlist, expires: Date.now() + 15 * 60_000 });
+      const huntState = { results: shortlist, expires: Date.now() + 15 * 60_000 };
+      pendingHuntByChannel.set(channel, huntState);
+      saveState(channel, "hunt", huntState, huntState.expires);
       say(runId, [
         `Top ${shortlist.length} hits for "${q}"${dupCount ? ` (${dupCount} cross-board duplicate(s) collapsed)` : ""}:`,
         ...shortlist.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${tracked.has(r.url) ? " (already tracked)" : ""}${r.flags.length ? `\n   WARNING: ${r.flags.join("; ")}` : ""}\n   ${r.snippet}`),
@@ -820,6 +853,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       const route = await routeWithModel(goal, (msgs) => withProgress(runId, "Planning the steps", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)));
       if (route && route.kind === "clarify") {
         pendingClarifyByChannel.set(channel, { question: route.question, original: t, expires: Date.now() + 10 * 60_000 });
+        saveState(channel, "clarify", { question: route.question, original: t }, Date.now() + 10 * 60_000);
         say(runId, route.question);
         return;
       }
@@ -1439,9 +1473,10 @@ export async function handleUserMessage(text: string, routed = false, channel: C
             ].join("\n"));
             const answers = await new Promise<Record<string, string> | null>((resolve) => {
               const timer = setTimeout(() => {
-                if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); resolve(null); }
+                if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); clearState(channel, "facts"); resolve(null); }
               }, 10 * 60 * 1000);
               pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
+              saveState(channel, "facts", { questions: qs }, Date.now() + 10 * 60_000);
             });
             if (answers === null) say(runId, "Skipped those - leaving them empty.");
             return answers ?? {};

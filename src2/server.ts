@@ -14,6 +14,10 @@ console.log(`personal-agent v2 control center: http://${HOST}:${PORT}`);
 warnIfCloudSynced(); // loud startup warning if ./data sits inside a OneDrive/Dropbox-synced path (WAL corruption risk)
 const { restoreWatchers } = await import("./watcher.js");
 restoreWatchers(); // resume persisted folder watches
+const { restoreConversationState } = await import("./agent2.js");
+const { emit } = await import("./bus.js");
+const restored = restoreConversationState((text) => emit({ ts: Date.now(), run_id: `boot-${Date.now()}`, kind: "text", role: "agent", text }));
+if (restored) console.log(`restored ${restored} in-flight conversation(s) from before the restart`);
 
 if (process.env.NO_OPEN !== "1") {
   try {
