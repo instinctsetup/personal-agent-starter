@@ -87,6 +87,9 @@ test("runFormFill: multi-page mock Google Form fills from profile + asked facts,
   assert.match(seen.summary || "", /Review before I submit/);
   assert.match(seen.summary || "", /Full name: Mahesh Thakur/);
   assert.match(seen.summary || "", /Email: mahesh@example\.com/);
+  // confidence tags: user-supplied answers are marked, profile facts are not
+  assert.match(seen.summary || "", /Why do you want to join\?: I love building things\. \[your answer\]/);
+  assert.ok(!/Full name: Mahesh Thakur \[/.test(seen.summary || ""), "solid profile facts carry no warning tag");
   assert.match(seen.summary || "", /Highest education: B\.Tech in Computer Science/);
   assert.match(seen.summary || "", /resume\.pdf/);
   assert.equal(res.answered["Full name"], "Mahesh Thakur");
@@ -172,4 +175,17 @@ test("chat: 'fill form' on a non-form page says exactly what failed and why", as
   off();
   const out = events.filter((e) => e.kind === "text" && e.role !== "user").map((e) => e.text).join("\n");
   assert.match(out, /Couldn't finish \(failed\)\. No questions found on this page/, "failure is visible with the reason");
+});
+
+test("answerFromFactsTagged: profile facts are solid, memory guesses are tagged", async () => {
+  const { addMemory } = await import("../src2/memory.js");
+  const direct = forms.answerFromFactsTagged("Full name", "short", { firstName: "Mahesh", lastName: "Thakur" });
+  assert.equal(direct.source, "profile");
+  addMemory("fact", "Graduation year is 2027", "user");
+  const guessed = forms.answerFromFactsTagged("Graduation year?", "short", {});
+  assert.equal(guessed.source, "memory");
+  assert.match(guessed.ans, /2027/);
+  const none = forms.answerFromFactsTagged("Favorite color", "short", {});
+  assert.equal(none.source, "");
+  assert.equal(none.ans, "");
 });

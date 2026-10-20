@@ -120,12 +120,25 @@ const FACT_MAP: [RegExp, string][] = [
   [/work\s*authori[sz]ation|visa|eligible to work/i, "workAuthorization"],
 ];
 
-export function answerFromFacts(label: string, type: FormQuestion["type"], profile: Record<string, string>): string {
-  if (type === "file") return /resume|cv\b|curriculum/i.test(label) ? profile.resumePath || "" : profile.resumePath || "";
+export type AnswerSource = "profile" | "memory" | "resume" | "";
+
+/** Where an answer came from - the review card shows this so he knows which
+ *  answers are solid facts and which are guesses from memory before he approves. */
+export function answerFromFactsTagged(label: string, type: FormQuestion["type"], profile: Record<string, string>): { ans: string; source: AnswerSource } {
+  if (type === "file") {
+    const p = profile.resumePath || "";
+    return { ans: p, source: p ? "resume" : "" };
+  }
   for (const [re, key] of FACT_MAP) {
     if (re.test(label)) {
-      if (key === "__fullName") return `${profile.firstName || ""} ${profile.lastName || ""}`.trim();
-      return profile[key] || "";
+      if (key === "__fullName") {
+        const full = `${profile.firstName || ""} ${profile.lastName || ""}`.trim();
+        if (full) return { ans: full, source: "profile" };
+      } else {
+        const v = profile[key] || "";
+        if (v) return { ans: v, source: "profile" };
+      }
+      // the profile knows this KIND of field but has no value - fall through to memory
     }
   }
   // durable memories: find a memory mentioning the label's distinctive words
@@ -133,10 +146,14 @@ export function answerFromFacts(label: string, type: FormQuestion["type"], profi
   if (words.length) {
     for (const m of listMemories(50)) {
       const t = m.text.toLowerCase();
-      if (words.some((w) => t.includes(w))) return m.text;
+      if (words.some((w) => t.includes(w))) return { ans: m.text, source: "memory" };
     }
   }
-  return "";
+  return { ans: "", source: "" };
+}
+
+export function answerFromFacts(label: string, type: FormQuestion["type"], profile: Record<string, string>): string {
+  return answerFromFactsTagged(label, type, profile).ans;
 }
 
 /** Pick the option index matching a free-text answer. -1 = no match. */
@@ -204,6 +221,7 @@ const CONFIRM_RE = /response has been recorded|thank you|thanks for (your|fillin
 
 export async function runFormFill(opts: { url: string; profile: Record<string, any>; resumePath?: string }, hooks: FormHooks): Promise<FillResult> {
   const answered: Record<string, string> = {};
+  const sources: Record<string, string> = {};
   const unknowns: string[] = [];
   try {
     const finalUrl = await navigate(opts.url);
@@ -220,16 +238,17 @@ export async function runFormFill(opts: { url: string; profile: Record<string, a
       const toAsk: string[] = [];
       const pageAnswers: Record<string, string> = {};
       for (const q of questions) {
-        let ans = answerFromFacts(q.label, q.type, opts.profile as Record<string, string>);
+        const tagged = answerFromFactsTagged(q.label, q.type, opts.profile as Record<string, string>);
+        let ans = tagged.ans;
         if (q.type === "file" && opts.resumePath && !ans) ans = opts.resumePath;
         if (!ans && q.type !== "file" && q.type !== "unknown") toAsk.push(q.label);
-        else pageAnswers[q.label] = ans;
+        else { pageAnswers[q.label] = ans; if (ans) sources[q.label] = tagged.source || (q.type === "file" ? "resume" : "profile"); }
       }
       if (toAsk.length) {
         hooks.say(`Page ${pages}: I need ${toAsk.length} answer(s) I don't have:`);
         const got = await hooks.askFacts(toAsk);
         for (const label of toAsk) {
-          if (got?.[label]) pageAnswers[label] = got[label];
+          if (got?.[label]) { pageAnswers[label] = got[label]; sources[label] = "you"; }
           else unknowns.push(label);
         }
       }
@@ -253,8 +272,9 @@ export async function runFormFill(opts: { url: string; profile: Record<string, a
         continue;
       }
       if (hasSubmit) {
+        const tag = (k: string) => sources[k] === "memory" ? " [from memory - double-check]" : sources[k] === "you" ? " [your answer]" : "";
         const summary = [`Review before I submit (page ${pages} of ${pages}):`]
-          .concat(Object.entries(answered).map(([k, v]) => `- ${k}: ${v}`))
+          .concat(Object.entries(answered).map(([k, v]) => `- ${k}: ${v}${tag(k)}`))
           .concat(unknowns.length ? ["", `Left empty/unanswered: ${unknowns.join(", ")}`] : [])
           .join("\n");
         const go = await hooks.confirm(summary, answered);
