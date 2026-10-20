@@ -20,6 +20,7 @@ import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js
 import { routeWithModel } from "./router.js";
 import { systemInfo, clipboardRead, clipboardWrite, launchApp, isKnownApp } from "./winops.js";
 import { planRename, planDownloadsCleanup, applyMoves, undoLast, downloadsDir, fmtMoves, type Move } from "./fileops.js";
+import { startWatch, stopWatch, listWatchers } from "./watcher.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -687,6 +688,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- open <app> - launch an allow-listed app (chrome, vscode, notepad, calculator, explorer, spotify); open <url> still browses",
         "- rename files in <dir> from <text> to <text> - batch rename with an approval card + undo last rename",
         "- clean up my downloads - archives files older than 30 days into _archive/<month>/ (approval card shows every move; daily-capped; undo last cleanup)",
+        "- watch <folder> [for new <ext>] / watching / unwatch <folder> - get pinged the moment a new file lands (survives restarts)",
       ].join("\n"));
       return;
     }
@@ -1506,6 +1508,30 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       } catch (err: any) {
         say(runId, err?.message || "Nothing to undo.");
       }
+      return;
+    }
+
+    // ---- folder watcher -----------------------------------------------------
+    const mWatch = cmd.match(/^watch\s+(.+?)(?:\s+for new\s+(\w+))?$/i);
+    if (mWatch) {
+      try {
+        const spec = startWatch(mWatch[1].trim(), mWatch[2] || null);
+        say(runId, `Watching ${spec.dir}${spec.ext ? ` for new ${spec.ext} files` : " for any new file"} - I'll ping you here the moment one lands. (\`${spec.id}\`; "unwatch ${spec.dir}" stops it.)`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't watch that folder.");
+      }
+      return;
+    }
+    if (/^(?:watching|watchers)$/i.test(cmd)) {
+      const ws = listWatchers();
+      say(runId, ws.length
+        ? "Watching:\n" + ws.map((w) => `- ${w.dir}${w.ext ? ` (${w.ext} only)` : ""} [${w.id}]`).join("\n")
+        : "Not watching any folder. Try `watch C:\\Users\\you\\Downloads for new pdf`.");
+      return;
+    }
+    const mUnwatch = cmd.match(/^unwatch\s+(.+)$/i);
+    if (mUnwatch) {
+      say(runId, stopWatch(mUnwatch[1].trim()) ? "Stopped watching that folder." : "I wasn't watching that. Say `watching` to see the list.");
       return;
     }
 

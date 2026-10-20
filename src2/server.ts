@@ -12,6 +12,8 @@ const HOST = process.env.HOST || "127.0.0.1";
 await app.listen({ port: PORT, host: HOST });
 console.log(`personal-agent v2 control center: http://${HOST}:${PORT}`);
 warnIfCloudSynced(); // loud startup warning if ./data sits inside a OneDrive/Dropbox-synced path (WAL corruption risk)
+const { restoreWatchers } = await import("./watcher.js");
+restoreWatchers(); // resume persisted folder watches
 
 if (process.env.NO_OPEN !== "1") {
   try {
