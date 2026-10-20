@@ -133,6 +133,7 @@ const RACE_BACKOFF_MS = Number(process.env.MODEL_RACE_BACKOFF_MS) || 8_000;
 const RACE_ROUNDS = 2;
 
 import type { ChatMessage } from "../src/providers/types.js";
+import { providerOf, recordAttempt, markWon, quotaToday, formatQuota, setQuotaCap } from "./quota.js";
 
 interface Racer { label: string; run: (signal: AbortSignal) => Promise<string>; }
 
@@ -221,11 +222,15 @@ export async function modelRace(runId: string, messages: ChatMessage[], opts?: {
     const result = await new Promise<{ text: string; label: string } | null>((resolve) => {
       let pending = roundRacers.length;
       let settled = false;
+      const kind0 = getSetting("model_provider") || "openai";
       for (const r of roundRacers) {
+        const q = providerOf(r.label, kind0);
+        const quotaRowId = recordAttempt(q.provider, q.model, false); // attempt spends quota even if a faster racer wins
         r.run(controller.signal).then((text) => {
           if (settled) return;
           if (text?.trim()) {
             settled = true;
+            markWon(quotaRowId); // credit the win to the same row - one request, one row
             controller.abort(); // cancel the slower calls
             resolve({ text, label: r.label });
             return;
@@ -706,6 +711,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
         "- linkedin / linkedin on / linkedin feed - LinkedIn assist (risk-gated)",
         "- linkedin crm / linkedin follow ups / mark <name> replied - your outreach pipeline with automatic 3-day follow-up nudges",
+        "- quota - today's free-tier model usage per provider, so you never hit a wall mid-task",
         "- linkedin message <profile-url>: <text> / connect with <profile-url> on linkedin - approval-gated, daily-capped",
         "- vault - list stored credentials (secrets never shown)",
         "- laptop status - battery, RAM, disk free, CPU at a glance",
@@ -996,6 +1002,16 @@ export async function handleUserMessage(text: string, routed = false, channel: C
 
     // ---- per-action daily caps ----------------------------------------------
     const CAP_ALIASES: Record<string, string> = { "send mail": "send_mail", mail: "send_mail", email: "send_mail", apply: "apply", applications: "apply", "linkedin message": "linkedin_message", "linkedin invite": "linkedin_invite" };
+    if (lower === "quota" || lower === "quotas" || lower === "model usage" || lower === "usage") {
+      say(runId, "Today's free-tier model usage:\n" + formatQuota(quotaToday()) + "\nSay \`cap quota <provider> <N>\` if a provider's real daily limit differs.");
+      return;
+    }
+    const mCapQuota = cmd.match(/^cap quota ([\w-]+) (\d+)$/i);
+    if (mCapQuota) {
+      setQuotaCap(mCapQuota[1].toLowerCase(), Number(mCapQuota[2]));
+      say(runId, `Noted - ${mCapQuota[1].toLowerCase()} daily limit set to ${mCapQuota[2]}.`);
+      return;
+    }
     if (lower === "caps") {
       say(runId, "Today's action caps (used/limit):\n" + capStatus().map((c) => `- ${c.action.replace(/_/g, " ")}: ${c.used}/${c.cap}`).join("\n") + "\nRaise one with \"cap send mail 20\".");
       return;
