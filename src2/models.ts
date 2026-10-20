@@ -85,6 +85,18 @@ export async function listLiveModels(spec: Spec, key: string): Promise<string[] 
 export type ResolvedModel = { model: string; source: "live" | "fallback"; tried: string[] };
 
 /** Pick and verify the model for a provider. Saves the winner into settings. */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
 export async function resolveModel(id: ProviderId, key?: string): Promise<ResolvedModel> {
   const spec = PROVIDERS[id];
   const k = key ?? getSetting(spec.keySetting) ?? "";
@@ -96,6 +108,7 @@ export async function resolveModel(id: ProviderId, key?: string): Promise<Resolv
     : spec.preferences;
   const seen = new Set<string>();
   const tried: string[] = [];
+  const VALIDATE_TIMEOUT_MS = 20_000;
   for (const m of candidates) {
     if (seen.has(m)) continue;
     seen.add(m);
@@ -103,13 +116,20 @@ export async function resolveModel(id: ProviderId, key?: string): Promise<Resolv
     try {
       if (spec.gemini) {
         const { validateGeminiConnection } = await import("../src/providers/gemini.js");
-        await validateGeminiConnection(m, k, spec.baseUrl());
+        await withTimeout(validateGeminiConnection(m, k, spec.baseUrl()), VALIDATE_TIMEOUT_MS, `${spec.label} ${m} validation`);
       } else {
-        await new OpenAiCompatibleProvider(spec.baseUrl(), m, k).chat([{ role: "user", content: "ping" }], { maxTokens: 4 });
+        // No timeout here previously meant a provider that accepts the connection but
+        // never answers (a known overloaded-free-tier failure mode) could hang
+        // `connect <provider>` forever.
+        await withTimeout(
+          new OpenAiCompatibleProvider(spec.baseUrl(), m, k).chat([{ role: "user", content: "ping" }], { maxTokens: 4 }),
+          VALIDATE_TIMEOUT_MS,
+          `${spec.label} ${m} validation`,
+        );
       }
       setSetting(spec.modelSetting, m);
       return { model: m, source: live?.includes(m) ? "live" : "fallback", tried };
-    } catch { /* dead or inaccessible model - try the next candidate */ }
+    } catch { /* dead, inaccessible, or timed-out model - try the next candidate */ }
   }
   throw new Error(`${spec.label}: none of the candidate models answered (tried: ${tried.join(", ")}). Check the key and the provider's status page.`);
 }

@@ -18,8 +18,9 @@ import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 import { routeWithModel } from "./router.js";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { resolveModel, currentModel, PROVIDERS, type ProviderId } from "./models.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
@@ -201,15 +202,15 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
  * first good answer, abort the slower calls, and say which model won. If every
  * racer fails (e.g. all of Google is 503ing), wait a beat and race once more.
  */
-export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, quiet = false): Promise<string> {
+export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, quiet = false, maxRacers = RACE_MAX_RACERS): Promise<string> {
   const raceSpan = startSpan(runId, "model.race", null, { quiet });
-  const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS); // web provider joins round 2 only - see loop below
+  const racers = buildRacers(messages, opts).slice(0, maxRacers); // web provider joins round 2 only - see loop below
   if (racers.length === 0) return provider().chat(messages, opts); // offline/mock path
   if (racers.length === 1) return racers[0].run(new AbortController().signal);
 
   let lastErr: unknown;
   for (let round = 1; round <= RACE_ROUNDS; round++) {
-    const roundRacers = round === 1 ? racers : buildRacers(messages, opts, true).slice(0, RACE_MAX_RACERS + 1);
+    const roundRacers = round === 1 ? racers : buildRacers(messages, opts, true).slice(0, maxRacers + 1);
     const controller = new AbortController();
     const result = await new Promise<{ text: string; label: string } | null>((resolve) => {
       let pending = roundRacers.length;
@@ -402,7 +403,7 @@ function extractMemories(runId: string, userText: string, agentReply: string) {
     { role: "system" as const, content: 'You extract durable user facts and preferences from a chat exchange. Reply with a strict JSON array (possibly empty) of {"kind":"fact"|"preference","text":"..."}. Keep only things worth remembering next week: name, city, college, skills, preferences, constraints, recurring context. Never secrets, never one-off requests, never guesses. JSON array only.' },
     { role: "user" as const, content: `User said: """${userText.slice(0, 500)}"""\nAssistant replied: """${agentReply.slice(0, 500)}"""` },
   ];
-  modelRace(runId, msgs, undefined, true)
+  modelRace(runId, msgs, { maxTokens: 300 }, true, 1) // 1 racer: background memory extraction must not burn the free-tier daily quota on a 4-way race
     .then((raw) => {
       const m = raw.match(/\[[\s\S]*\]/);
       if (!m) return;
@@ -1039,6 +1040,12 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return;
       }
       const action = liAsk.kind === "message" ? "linkedin_message" : "linkedin_invite";
+      const cap = checkCap(action);
+      if (!cap.allowed) {
+        emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: action, text: `${action} denied: daily cap reached` });
+        say(runId, `Daily LinkedIn ${liAsk.kind} cap reached (${cap.used}/${cap.cap}). Nothing was drafted - say \`cap "linkedin ${liAsk.kind}" <N>\` to raise it.`);
+        return;
+      }
       const summary = liAsk.kind === "message"
         ? `LinkedIn DM to ${liAsk.url}:\n\n${liAsk.text}`
         : `LinkedIn invite to ${liAsk.url}${liAsk.text ? ` with note:\n\n${liAsk.text}` : " (no note)"}`;
@@ -1058,6 +1065,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
             : await tools.sendInvite(p.url, p.text || "", async () => true);
           return r.detail;
         });
+        recordAction(action, liAsk.url); // the cap ledger must reflect real LinkedIn sends
         say(runId, String(detail));
       } catch (err: any) {
         say(runId, err?.name === "LinkedInStopped" ? `Stopped: ${err.message}` : `Couldn't do that on LinkedIn: ${err?.message || err}. If LinkedIn wants a login or check, open it in the Browser tab and do it once by hand.`);
@@ -1161,7 +1169,13 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     const mGitInit = cmd.match(/^(?:git init|new repo)(?:\s+(\S+))?$/i);
     if (mGitInit) {
       const name = (mGitInit[1] || "new-project").replace(/[^\w.-]/g, "-");
-      const path = `${process.env.HOME || "."}/repos/${name}`;
+      // Cross-platform home dir resolution (os.homedir() handles Windows USERPROFILE,
+      // macOS/Linux HOME correctly) - process.env.HOME is unset on a plain Windows
+      // shell, which previously made every repo land in a relative "./repos" next to
+      // wherever the daemon process happened to be started from.
+      const reposRoot = getSetting("repos_dir") || join(homedir(), "personal-agent-repos");
+      mkdirSync(reposRoot, { recursive: true });
+      const path = join(reposRoot, name);
       const r = await toolCall(runId, "git.init", { name }, async () => {
         const { initRepo } = await import("./git.js");
         return initRepo(path, name);

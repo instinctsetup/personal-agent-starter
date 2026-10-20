@@ -1,8 +1,9 @@
 /** AES-256-GCM encrypted credential vault. Key lives in data/.vault-key (mode 600). */
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { db } from "./db.js";
+import { secureFile } from "./secure-file.js";
 
 const DATA_DIR = process.env.AGENT_DATA_DIR || join(process.cwd(), "data");
 const KEY_PATH = join(DATA_DIR, ".vault-key");
@@ -12,7 +13,7 @@ function loadKey(): Buffer {
   if (existsSync(KEY_PATH)) return Buffer.from(readFileSync(KEY_PATH, "utf8"), "hex");
   const key = randomBytes(32);
   writeFileSync(KEY_PATH, key.toString("hex"), { mode: 0o600 });
-  try { chmodSync(KEY_PATH, 0o600); } catch { /* windows */ }
+  secureFile(KEY_PATH); // chmod 600 is a no-op for access control on NTFS; secureFile adds real Windows ACLs
   return key;
 }
 const KEY = loadKey();

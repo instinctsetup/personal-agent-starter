@@ -11,20 +11,33 @@ let userControl = false; // when true, agent pauses automation so the human can 
 export function isUserControlling(): boolean { return userControl; }
 export function setUserControl(v: boolean): void { userControl = v; }
 
+let launchInFlight: Promise<BrowserContext> | null = null;
+
+async function launchContext(): Promise<BrowserContext> {
+  mkdirSync(join(DATA_DIR, "browser-profile"), { recursive: true });
+  return chromium.launchPersistentContext(join(DATA_DIR, "browser-profile"), {
+    headless: true,
+    // Plain Chromium, no stealth or fingerprint spoofing: default UA, default flags,
+    // no webdriver-property patching. Sites see this exactly as an automated browser.
+    args: ["--no-sandbox"],
+    viewport: { width: 1280, height: 800 },
+  });
+}
+
 export async function ensureBrowser(): Promise<Page> {
   if (page && !page.isClosed()) return page;
   // Track the context itself: for a persistent context, context.browser() is null, so
   // keying off a Browser handle silently relaunched a second context on the same
   // profile dir whenever the page had been closed (profile-lock errors, lost state).
   if (!context) {
-    mkdirSync(join(DATA_DIR, "browser-profile"), { recursive: true });
-    context = await chromium.launchPersistentContext(join(DATA_DIR, "browser-profile"), {
-      headless: true,
-      // Plain Chromium, no stealth or fingerprint spoofing: default UA, default flags,
-      // no webdriver-property patching. Sites see this exactly as an automated browser.
-      args: ["--no-sandbox"],
-      viewport: { width: 1280, height: 800 },
-    });
+    // Memoize the in-flight launch so concurrent callers (Browser-tab polling, a
+    // scheduled job, and a chat command firing around the same tick) share one
+    // launch instead of racing two launchPersistentContext calls onto the same
+    // profile dir (profile-lock error).
+    if (!launchInFlight) {
+      launchInFlight = launchContext().finally(() => { launchInFlight = null; });
+    }
+    context = await launchInFlight;
   }
   const pages = context.pages();
   page = pages.find((p) => !p.isClosed()) ?? (await context.newPage());

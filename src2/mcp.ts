@@ -8,6 +8,9 @@
  *  Every call is traced (span + bus events) exactly like a chat-triggered tool call.
  *  Auth: when APP_PASSWORD is set, the session cookie OR `Authorization: Bearer <APP_PASSWORD>`. */
 import { randomBytes } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import { emit, onEvent } from "./bus.js";
 import { gateTool, listTools, getTool, type ToolSpec } from "./skills.js";
@@ -125,7 +128,9 @@ async function direct(name: string, a: Record<string, unknown>): Promise<string>
     case "git.init": {
       const { initRepo } = await import("./git.js");
       const name = String(a.name).replace(/[^\w.-]/g, "-");
-      const r = await initRepo(`${process.env.HOME || "."}/repos/${name}`, name);
+      const reposRoot = join(homedir(), "personal-agent-repos");
+      mkdirSync(reposRoot, { recursive: true });
+      const r = await initRepo(join(reposRoot, name), name);
       return `Repo ${r.created ? "created" : "already existed"} at ${r.path}.`;
     }
     case "git.commit": {
