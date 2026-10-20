@@ -11,6 +11,7 @@ import { MockProvider } from "../src/providers/mock.js";
 
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
+import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
 export const FALLBACK_GEMINI_MODEL = "gemini-2.5-flash"; // stable free-tier fallback if the default is not found
@@ -111,7 +112,7 @@ import type { ChatMessage } from "../src/providers/types.js";
 interface Racer { label: string; run: (signal: AbortSignal) => Promise<string>; }
 
 /** Every free model the user can answer with right now: the Gemini free-tier chain on his key, plus optional Groq / OpenRouter free keys he added himself. */
-export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Racer[] {
+export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, includeWeb = false): Racer[] {
   const racers: Racer[] = [];
   const kind = getSetting("model_provider") || "openai";
   let configured = "";
@@ -146,7 +147,12 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
       run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", orKey, signal).chat(messages, opts),
     });
   }
-  return racers.concat(geminiRest);
+  const all = racers.concat(geminiRest);
+  if (includeWeb && geminiWebEnabled()) {
+    // experimental last resort: the shared browser drives gemini.google.com with the user's own login
+    all.push({ label: "gemini-web (experimental)", run: (signal) => geminiWebChat(flattenMessages(messages), signal) });
+  }
+  return all;
 }
 
 /**
@@ -155,17 +161,18 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
  * racer fails (e.g. all of Google is 503ing), wait a beat and race once more.
  */
 export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
-  const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS);
+  const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS); // web provider joins round 2 only - see loop below
   if (racers.length === 0) return provider().chat(messages, opts); // offline/mock path
   if (racers.length === 1) return racers[0].run(new AbortController().signal);
 
   let lastErr: unknown;
   for (let round = 1; round <= RACE_ROUNDS; round++) {
+    const roundRacers = round === 1 ? racers : buildRacers(messages, opts, true).slice(0, RACE_MAX_RACERS + 1);
     const controller = new AbortController();
     const result = await new Promise<{ text: string; label: string } | null>((resolve) => {
-      let pending = racers.length;
+      let pending = roundRacers.length;
       let settled = false;
-      for (const r of racers) {
+      for (const r of roundRacers) {
         r.run(controller.signal).then((text) => {
           if (settled) return;
           if (text?.trim()) {
@@ -374,6 +381,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, [
         "What I understand (plain English works - \"can u apply to <url>\" is fine):",
         "- connect <gemini|groq|openrouter|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
+        "- gemini-web on/off - experimental: answer via the Gemini website when every API is down (you log in once in the Browser tab)",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
         "- hunt <query> - job hunt: shortlist -> \"apply to 1,3\" / \"apply all\" (tracked as Scouted)",
         "- open / browse <url> - drive the live browser (Browser tab)",
@@ -576,6 +584,24 @@ export async function handleUserMessage(text: string): Promise<void> {
       } catch (err: any) {
         say(runId, err?.name === "LinkedInStopped" ? `Stopped: ${err.message}` : `Couldn't do that on LinkedIn: ${err?.message || err}. If LinkedIn wants a login or check, open it in the Browser tab and do it once by hand.`);
       }
+      return;
+    }
+
+    // ---- experimental gemini-web provider --------------------------------
+    if (lower === "gemini-web on" || lower === "connect gemini-web" || lower === "gemini web on") {
+      setSetting("gemini_web_enabled", "1");
+      say(runId, [
+        "Experimental gemini-web provider is ON. Read this once:",
+        "- It drives gemini.google.com in the app's browser with YOUR login - a way to use a Google AI Pro/Ultra plan's website-only quota when the free API is down.",
+        "- One-time setup: open the Browser tab, take control, and sign into your spare Google account yourself. I never see or store the password.",
+        "- It joins a model race ONLY when every API model already failed, paced to one call per 20s, so it stays out of the way.",
+        "- Experimental: Google can change the page or block this at any time. `gemini-web off` disables it instantly.",
+      ].join("\n"));
+      return;
+    }
+    if (lower === "gemini-web off" || lower === "gemini web off") {
+      setSetting("gemini_web_enabled", "0");
+      say(runId, "gemini-web is off. Nothing will drive the Gemini website anymore.");
       return;
     }
 
