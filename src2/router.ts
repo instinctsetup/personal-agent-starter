@@ -39,6 +39,7 @@ export const COMMAND_GRAMMAR = `
 - remember <fact> | memories | forget <id>   (durable memory)
 - local | local setup | local on | local off   (on-device models via Ollama)
 - skills   (list every tool with its risk tier, caps and approval gates)
+- traces | trace <run-id>   (structured run logs as a span tree)
 - board <pipeline|inbox|overview>   (live shareable dashboard link)
 - boards   (list dashboard links)
 - unshare <pipeline|inbox|overview>   (kill the share link, mint a new one)

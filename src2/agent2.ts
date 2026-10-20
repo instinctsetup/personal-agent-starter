@@ -6,6 +6,7 @@ import { checkCap, recordAction, capStatus, setCap, DEFAULT_CAPS } from "./caps.
 import { createPlan, getPlan, listPlans, cancelPlan, runPlan, type Plan } from "./plans.js";
 import { addMemory, listMemories, forgetMemory, forgetAll, memoryContext } from "./memory.js";
 import { localEnabled, localStatus, ollamaChat, pullModel, setLocalEnabled } from "./local.js";
+import { startSpan, endSpan, recentRuns, spanTree } from "./trace.js";
 import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
@@ -48,12 +49,15 @@ async function toolCall<T>(runId: string, tool: string, input: unknown, fn: () =
     throw new Error(gate.reason);
   }
   const started = Date.now();
+  const spanId = startSpan(runId, tool, null, { input });
   emit({ ts: started, run_id: runId, kind: "tool_call", tool, input, state: "running" });
   try {
     const result = await fn();
+    endSpan(spanId, "ok");
     emit({ ts: Date.now(), run_id: runId, kind: "tool_result", tool, input, result, duration_ms: Date.now() - started, state: "ok" });
     return result;
   } catch (err: any) {
+    endSpan(spanId, "error", { error: String(err?.message || err).slice(0, 500) });
     emit({ ts: Date.now(), run_id: runId, kind: "tool_result", tool, input, error: String(err?.message || err), duration_ms: Date.now() - started, state: "error" });
     throw err;
   }
@@ -195,6 +199,7 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
  * racer fails (e.g. all of Google is 503ing), wait a beat and race once more.
  */
 export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, quiet = false): Promise<string> {
+  const raceSpan = startSpan(runId, "model.race", null, { quiet });
   const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS); // web provider joins round 2 only - see loop below
   if (racers.length === 0) return provider().chat(messages, opts); // offline/mock path
   if (racers.length === 1) return racers[0].run(new AbortController().signal);
@@ -225,10 +230,12 @@ export async function modelRace(runId: string, messages: ChatMessage[], opts?: {
     });
     if (result) {
       if (!quiet) say(runId, `Raced ${roundRacers.length} free models in parallel - ${result.label} answered first.`);
+      endSpan(raceSpan, "ok", { winner: result.label, racers: roundRacers.length, round });
       return result.text;
     }
     if (round < RACE_ROUNDS) await sleep(RACE_BACKOFF_MS);
   }
+  endSpan(raceSpan, "error", { error: "all racers failed" });
   throw lastErr instanceof Error ? lastErr : new Error("All free models failed.");
 }
 
@@ -481,9 +488,14 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     };
     const runPlanWithUi = async (p: Plan): Promise<Plan> => {
       say(runId, `Plan ${p.id}: "${p.goal}" - ${p.steps.length} step(s). Each step is checkpointed; a failure pauses the plan instead of losing it.`);
+      const planSpan = startSpan(runId, `plan:${p.goal.slice(0, 60)}`, null, { plan_id: p.id, steps: p.steps.length });
+      const stepSpans = new Map<number, string>();
       const done = await runPlan(p, planExecutor, planFixer, {
         onStep: (pl, i, phase) => {
           const s = pl.steps[i];
+          if (phase === "start") stepSpans.set(i, startSpan(runId, `plan.step ${i + 1}`, planSpan, { cmd: s.cmd }));
+          if (phase === "done") { const id = stepSpans.get(i); if (id) endSpan(id, "ok"); }
+          if (phase === "failed") { const id = stepSpans.get(i); if (id) endSpan(id, "error", { error: s.error || "" }); }
           if (phase === "start") emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label: `plan ${pl.id} step ${i + 1}/${pl.steps.length}`, text: `Step ${i + 1}/${pl.steps.length}: ${s.cmd}` }, false);
           if (phase === "retry") say(runId, `Step ${i + 1} failed (${s.error || "error"}) - retrying once.`);
           if (phase === "corrected") say(runId, `Step ${i + 1} failed twice, so I'm trying a different way: ${s.cmd}`);
@@ -491,6 +503,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
           if (phase === "failed") say(runId, `Step ${i + 1} "${s.cmd}" failed: ${s.error || "unknown error"}.`);
         },
       });
+      endSpan(planSpan, done.status === "done" ? "ok" : "error", { final: done.status });
       if (done.status === "done") {
         say(runId, `Plan ${done.id} finished - all ${done.steps.length} step(s) done.`);
         addMemory("summary", `Completed plan: "${done.goal}" (${done.steps.map((s) => s.cmd).join("; ")})`, "system");
@@ -556,6 +569,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- remember <fact> / memories / forget <id> - durable memory across sessions (secrets stay in the vault)",
         "- local / local setup / local on|off - private on-device models via Ollama (auto-detects your GPU, cloud race as fallback)",
         "- skills - the full tool manifest (what I can do, risk tier, caps and approval gates per tool)",
+        "- traces / trace <run-id> - structured run logs: every tool call as a timed span tree",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -723,6 +737,27 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       setLocalEnabled(true);
       const envNote = "For more context on a 4GB card: set OLLAMA_KV_CACHE_TYPE=q8_0 and OLLAMA_FLASH_ATTENTION=1 (halves context memory).";
       say(runId, `Local models ready and ON: ${st.tier.chat} (chat) + ${st.tier.router} (routing). Verify GPU residency anytime with \`ollama ps\` (PROCESSOR should read 100% GPU). ${envNote}`);
+      return;
+    }
+
+    // ---- traces: structured run logs -------------------------------------------
+    if (lower === "traces" || lower === "runs") {
+      const runs = recentRuns(10);
+      say(runId, runs.length
+        ? "Recent runs:\n" + runs.map((r) =>
+            `- ${r.run_id} - ${(r.duration_ms / 1000).toFixed(1)}s, ${r.spans} span(s)${r.errors ? `, ${r.errors} error(s)` : ""} - ${r.tools.slice(0, 4).join(", ")}${r.tools.length > 4 ? "…" : ""}`
+          ).join("\n") + "\nSay \`trace <run-id>\` for the full span tree of one run."
+        : "No runs recorded yet - traces appear as soon as tools run.");
+      return;
+    }
+    const mTrace = cmd.match(/^trace\s+([a-z0-9-]+)$/i);
+    if (mTrace) {
+      const tree = spanTree(mTrace[1]);
+      say(runId, tree.length
+        ? `Run ${mTrace[1]}:\n` + tree.map((s) =>
+            `${"  ".repeat(s.depth)}${s.status === "error" ? "✗" : "✓"} ${s.name} (${(((s.end_ts ?? s.start_ts) - s.start_ts) / 1000).toFixed(1)}s)${s.status === "error" && s.attrs.error ? ` - ${String(s.attrs.error).slice(0, 80)}` : ""}${s.attrs.winner ? ` - winner: ${s.attrs.winner}` : ""}`
+          ).join("\n")
+        : `No spans for run ${mTrace[1]}.`);
       return;
     }
 

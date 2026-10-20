@@ -110,6 +110,14 @@ export async function buildApp() {
   });
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
+  app.get("/api/traces", async () => {
+    const { recentRuns } = await import("./trace.js");
+    return { runs: recentRuns(20) };
+  });
+  app.get("/api/traces/:runId", async (req) => {
+    const { spanTree } = await import("./trace.js");
+    return { spans: spanTree((req.params as any).runId) };
+  });
   app.get("/api/skills", async () => {
     const { skillManifest } = await import("./skills.js");
     return { tools: skillManifest() };
