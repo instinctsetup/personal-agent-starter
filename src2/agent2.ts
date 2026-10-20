@@ -561,6 +561,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- hunt <query> - job hunt: shortlist -> \"apply to 1,3\" / \"apply all\" (tracked as Scouted)",
         "- open / browse <url> - drive the live browser (Browser tab)",
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
+        "- signups - list completed signups",
         "- apply to <job-url> - fill profile facts only, approval before submit",
         "- track <Company> - <role> / applications - application tracker",
         "- board <pipeline|inbox|overview> / boards - live shareable dashboards; unshare <kind> kills the link",
