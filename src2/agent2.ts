@@ -705,6 +705,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
         "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
         "- linkedin / linkedin on / linkedin feed - LinkedIn assist (risk-gated)",
+        "- linkedin crm / linkedin follow ups / mark <name> replied - your outreach pipeline with automatic 3-day follow-up nudges",
         "- linkedin message <profile-url>: <text> / connect with <profile-url> on linkedin - approval-gated, daily-capped",
         "- vault - list stored credentials (secrets never shown)",
         "- laptop status - battery, RAM, disk free, CPU at a glance",
@@ -1178,7 +1179,14 @@ export async function handleUserMessage(text: string, routed = false, channel: C
           return r.detail;
         });
         recordAction(action, liAsk.url); // the cap ledger must reflect real LinkedIn sends
-        say(runId, String(detail));
+        try {
+          const { recordOutreach, setFollowUpJob } = await import("./licrm.js");
+          const { addJob } = await import("./scheduler.js");
+          const row = recordOutreach(liAsk.kind, liAsk.url, liAsk.text || "", 3);
+          const job = addJob(`remind: LinkedIn follow-up: ${row.slug} hasn't been marked as replied since your ${liAsk.kind} 3 days ago. If they answered, say "mark ${row.slug} replied". Otherwise a gentle follow-up could help - just ask (daily cap still applies).`, row.follow_up_due!, null);
+          setFollowUpJob(row.id, job.id);
+        } catch { /* CRM bookkeeping must never break a successful send */ }
+        say(runId, String(detail) + ` Noted in your LinkedIn pipeline - I'll nudge you in 3 days if they haven't replied.`);
       } catch (err: any) {
         say(runId, err?.name === "LinkedInStopped" ? `Stopped: ${err.message}` : `Couldn't do that on LinkedIn: ${err?.message || err}. If LinkedIn wants a login or check, open it in the Browser tab and do it once by hand.`);
       }
@@ -1200,6 +1208,40 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     if (lower === "gemini-web off" || lower === "gemini web off") {
       setSetting("gemini_web_enabled", "0");
       say(runId, "gemini-web is off. Nothing will drive the Gemini website anymore.");
+      return;
+    }
+
+    // ---- linkedin mini-CRM ------------------------------------------------
+    if (lower === "linkedin crm" || lower === "linkedin pipeline" || lower === "linkedin outreach") {
+      const { listOutreach, formatOutreach } = await import("./licrm.js");
+      const list = formatOutreach(listOutreach());
+      say(runId, list
+        ? `Your LinkedIn pipeline:\n${list}\nSay "mark <name> replied" when they answer, "followed up with <name>" after you nudge them.`
+        : `No LinkedIn outreach yet. Messages and invites you send through me land here automatically, with a 3-day follow-up nudge.`);
+      return;
+    }
+    if (lower === "linkedin follow ups" || lower === "linkedin follow-ups" || lower === "who should i follow up with" || lower === "linkedin followups") {
+      const { dueFollowUps, formatOutreach, listOutreach } = await import("./licrm.js");
+      const due = formatOutreach(dueFollowUps());
+      if (due) { say(runId, `Time to follow up:\n${due}\nJust say the word and I'll draft the follow-up (approval + daily cap apply as usual).`); return; }
+      const pending = listOutreach().filter((r) => r.status === "sent");
+      say(runId, pending.length
+        ? `Nobody is due for a follow-up yet. ${pending.length} conversation(s) still open - I'll nudge you when one comes due.`
+        : `No open LinkedIn conversations to follow up on.`);
+      return;
+    }
+    const mReplied = cmd.match(/^mark\s+(\S+)\s+(?:as\s+)?replied(?:\s+on\s+linkedin)?$/i);
+    if (mReplied) {
+      const { markReplied } = await import("./licrm.js");
+      const row = markReplied(mReplied[1]);
+      say(runId, row ? `${row.slug} marked as replied - follow-up reminder off.` : `No outreach to "${mReplied[1]}" in your pipeline yet.`);
+      return;
+    }
+    const mFollowedUp = cmd.match(/^followed up with (\S+)$/i);
+    if (mFollowedUp) {
+      const { markFollowedUp } = await import("./licrm.js");
+      const row = markFollowedUp(mFollowedUp[1]);
+      say(runId, row ? `${row.slug} marked as followed up - all done there.` : `No outreach to "${mFollowedUp[1]}" in your pipeline yet.`);
       return;
     }
 
