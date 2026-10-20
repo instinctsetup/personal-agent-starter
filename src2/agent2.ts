@@ -10,10 +10,12 @@ import { parseSchedule } from "./scheduler.js";
 import { MockProvider } from "../src/providers/mock.js";
 
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
-import { GeminiProvider } from "../src/providers/gemini.js";
+import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
 export const FALLBACK_GEMINI_MODEL = "gemini-2.5-flash"; // stable free-tier fallback if the default is not found
+/** Free-tier models tried in order when the configured one is overloaded (503/429). Verified against ai.google.dev/gemini-api/docs/rate-limits, Oct 2026. */
+export const GEMINI_FALLBACK_CHAIN = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"];
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
 function provider() {
@@ -21,7 +23,7 @@ function provider() {
   const kind = getSetting("model_provider") || "openai";
   if (kind === "gemini") {
     const model = getSetting("model") || DEFAULT_GEMINI_MODEL;
-    return key ? new GeminiProvider(model, key) : new MockProvider();
+    return key ? new GeminiProvider(model, key, process.env.GEMINI_BASE_URL || undefined) : new MockProvider();
   }
   const base = getSetting("model_base_url") || "https://api.openai.com/v1";
   const model = getSetting("model") || DEFAULT_OPENAI_MODEL;
@@ -97,7 +99,99 @@ async function profileSenderName(): Promise<string> {
 }
 
 /** Model-drafted subject + body from the user's plain-English request. */
-async function draftWithModel(p: ReturnType<typeof provider>, request: string, to: string, senderName: string): Promise<{ subject: string; body: string }> {
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** Cap on parallel racers: each chat turn spends up to this many free-tier requests (the rate-limit tradeoff of racing). */
+const RACE_MAX_RACERS = Number(process.env.MODEL_RACE_MAX) || 4;
+/** Pause before a second race round when every racer failed in round one. */
+const RACE_BACKOFF_MS = Number(process.env.MODEL_RACE_BACKOFF_MS) || 8_000;
+const RACE_ROUNDS = 2;
+
+import type { ChatMessage } from "../src/providers/types.js";
+
+interface Racer { label: string; run: (signal: AbortSignal) => Promise<string>; }
+
+/** Every free model the user can answer with right now: the Gemini free-tier chain on his key, plus optional Groq / OpenRouter free keys he added himself. */
+export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Racer[] {
+  const racers: Racer[] = [];
+  const kind = getSetting("model_provider") || "openai";
+  let configured = "";
+  let geminiRest: Racer[] = [];
+  if (kind === "gemini") {
+    const key = getSetting("model_api_key") || "";
+    if (key) {
+      configured = getSetting("model") || DEFAULT_GEMINI_MODEL;
+      const mk = (m: string): Racer => ({
+        label: m,
+        run: (signal) => new GeminiProvider(m, key, process.env.GEMINI_BASE_URL || undefined, { signal }).chat(messages, opts),
+      });
+      racers.push(mk(configured));
+      geminiRest = GEMINI_FALLBACK_CHAIN.filter((x) => x !== configured).map(mk);
+    }
+  } else {
+    configured = getSetting("model") || DEFAULT_OPENAI_MODEL;
+    racers.push({ label: configured, run: () => provider().chat(messages, opts) });
+  }
+  // extra providers outrank the gemini chain tail, so a capped race still spans providers
+  const groqKey = getSetting("groq_api_key");
+  if (groqKey) {
+    racers.push({
+      label: "groq/llama-3.3-70b",
+      run: (signal) => new OpenAiCompatibleProvider(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", groqKey, signal).chat(messages, opts),
+    });
+  }
+  const orKey = getSetting("openrouter_api_key");
+  if (orKey) {
+    racers.push({
+      label: "openrouter/llama-3.3-70b:free",
+      run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", orKey, signal).chat(messages, opts),
+    });
+  }
+  return racers.concat(geminiRest);
+}
+
+/**
+ * Race the free models: fire the prompt at all of them in parallel, take the
+ * first good answer, abort the slower calls, and say which model won. If every
+ * racer fails (e.g. all of Google is 503ing), wait a beat and race once more.
+ */
+export async function modelRace(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+  const racers = buildRacers(messages, opts).slice(0, RACE_MAX_RACERS);
+  if (racers.length === 0) return provider().chat(messages, opts); // offline/mock path
+  if (racers.length === 1) return racers[0].run(new AbortController().signal);
+
+  let lastErr: unknown;
+  for (let round = 1; round <= RACE_ROUNDS; round++) {
+    const controller = new AbortController();
+    const result = await new Promise<{ text: string; label: string } | null>((resolve) => {
+      let pending = racers.length;
+      let settled = false;
+      for (const r of racers) {
+        r.run(controller.signal).then((text) => {
+          if (settled) return;
+          if (text?.trim()) {
+            settled = true;
+            controller.abort(); // cancel the slower calls
+            resolve({ text, label: r.label });
+            return;
+          }
+          if (--pending === 0) resolve(null);
+        }).catch((err) => {
+          lastErr = err;
+          if (settled) return;
+          if (--pending === 0) resolve(null);
+        });
+      }
+    });
+    if (result) {
+      say(runId, `Raced ${racers.length} free models in parallel - ${result.label} answered first.`);
+      return result.text;
+    }
+    if (round < RACE_ROUNDS) await sleep(RACE_BACKOFF_MS);
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("All free models failed.");
+}
+
+async function draftWithModel(draftRunId: string, _p: ReturnType<typeof provider>, request: string, to: string, senderName: string): Promise<{ subject: string; body: string }> {
   const system = [
     "You draft emails for the user. Write in first person, as the user.",
     "Style: short (under 120 words), polite, direct, plain text. Match the user's casual but respectful tone.",
@@ -110,7 +204,7 @@ async function draftWithModel(p: ReturnType<typeof provider>, request: string, t
     "",
     "<body paragraphs>",
   ].join("\n");
-  const raw = await p.chat([
+  const raw = await modelRace(draftRunId, [
     { role: "system", content: system },
     { role: "user", content: `Recipient: ${to}\nSender name: ${senderName || "unknown"}\nThe user's request (their words): ${request}` },
   ], { maxTokens: 700 });
@@ -279,7 +373,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     if (lower === "help" || lower === "commands") {
       say(runId, [
         "What I understand (plain English works - \"can u apply to <url>\" is fine):",
-        "- connect <gemini|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
+        "- connect <gemini|groq|openrouter|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
         "- hunt <query> - job hunt: shortlist -> \"apply to 1,3\" / \"apply all\" (tracked as Scouted)",
         "- open / browse <url> - drive the live browser (Browser tab)",
@@ -392,7 +486,7 @@ export async function handleUserMessage(text: string): Promise<void> {
         } else {
           try {
             ({ subject, body } = await toolCall(runId, "mail.draft", { to: sendIntent.to }, async () =>
-              withProgress(runId, "Drafting the email", () => draftWithModel(p, t, sendIntent.to, senderName))));
+              withProgress(runId, "Drafting the email", () => draftWithModel(runId, p, t, sendIntent.to, senderName))));
           } catch {
             ({ subject, body } = fallbackDraft(t, sendIntent.to, senderName));
             say(runId, "The model didn't come back with a draft, so I made a plain one from your words - tap Edit in the card to polish it.");
@@ -672,7 +766,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, `I didn't recognise that as a command, and no AI model is connected yet, so I can't chat freely. Type \`connect gemini\` to add a free model, or \`help\` to see what I can do.`);
       return;
     }
-    const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => p.chat([{ role: "user", content: t }])));
+    const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, [{ role: "user", content: t }])));
     say(runId, reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.");
   } catch (err: any) {
     emit({ ts: Date.now(), run_id: runId, kind: "error", role: "agent", text: `Something failed: ${err?.message || err}` });
@@ -685,6 +779,14 @@ function serviceFields(service: string) {
       return [
         { key: "model", label: `Model (blank = ${DEFAULT_GEMINI_MODEL}, best free-tier model)`, secret: false },
         { key: "model_api_key", label: "Gemini API key (free: aistudio.google.com > Get API key)", secret: true },
+      ];
+    case "groq":
+      return [
+        { key: "groq_api_key", label: "Groq API key (free: console.groq.com > API Keys). Joins every model race.", secret: true },
+      ];
+    case "openrouter":
+      return [
+        { key: "openrouter_api_key", label: "OpenRouter API key (free: openrouter.ai > Keys). Joins every model race.", secret: true },
       ];
     case "model": case "model key":
       return [
@@ -755,6 +857,22 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
     store.save(patch as any);
     say(runId, `Profile saved (${Object.keys(patch).length} fields). The job applier fills only these facts.`);
     return "ok";
+  }
+  // optional race keys: validate with a tiny ping, then they join every model race
+  if (service === "groq" || service === "openrouter") {
+    try {
+      const key = getSetting(`${service}_api_key`) || "";
+      if (!key) throw new Error("no key was stored - paste it into the card");
+      const p = service === "groq"
+        ? new OpenAiCompatibleProvider(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", key)
+        : new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", key);
+      await p.chat([{ role: "user", content: "ping" }], { maxTokens: 4 });
+      say(runId, `${service === "groq" ? "Groq" : "OpenRouter"} key works - it now joins every model race alongside your Gemini models.`);
+      return "ok";
+    } catch (err: any) {
+      say(runId, `Saved, but validation failed: ${err?.message || err}. The key stays stored - fix it any time with \`connect ${service}\`.`);
+      return "validation_failed";
+    }
   }
   // live validation where possible
   if (service === "model" || service === "model key" || isGemini) {

@@ -118,8 +118,9 @@ test('chat: "hi" with a thinking Gemini shows waiting status, then the reply', a
     assert.ok(evs.some((e) => e.kind === 'status' && e.state === 'waiting'));
     assert.ok(evs.some((e) => e.kind === 'status' && e.state === 'done'));
     const out = visible(evs);
-    assert.equal(out.length, 1);
-    assert.equal(out[0].text, 'Hello Mahesh');
+    assert.equal(out.length, 2); // race winner note + the reply
+    assert.match(out[0].text, /answered first/);
+    assert.equal(out[1].text, 'Hello Mahesh');
   } finally { m.close(); }
 });
 

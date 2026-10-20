@@ -48,6 +48,8 @@ const MAX_ATTEMPTS = 2; // first try + one retry, but only on timeout/network fa
 export interface GeminiRequestOptions {
   timeoutMs?: number;
   attempts?: number;
+  /** External abort (e.g. a model race cancelling slower calls). */
+  signal?: AbortSignal;
   onStep?: (event: GeminiStepEvent) => void;
   /** Overrides the stage label used in logs and timeout messages. */
   step?: GeminiStep;
@@ -138,6 +140,10 @@ async function fetchWithRetry(
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (opts?.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else opts.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
     const started = Date.now();
     report({ step, attempt, state: 'start', elapsedMs: 0 });
     try {
