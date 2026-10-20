@@ -5,7 +5,7 @@ type Event = {
   ts: number; run_id: string; kind: string; role?: string; text?: string;
   tool?: string; input?: any; result?: any; error?: string; duration_ms?: number; state?: string;
   id?: string; action?: string; summary?: string; payload?: Record<string, any>;
-  service?: string; fields?: { key: string; label: string; secret: boolean }[];
+  label?: string; elapsed_s?: number; service?: string; fields?: { key: string; label: string; secret: boolean }[];
 };
 type App_ = { id: number; ts: number; company: string; role?: string; portal?: string; url?: string; status: string; notes?: string };
 
@@ -45,14 +45,15 @@ export default function App() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    fetch("/api/history").then(r => r.json()).then(d => {
+    const loadHistory = () => fetch("/api/history").then(r => r.json()).then(d => {
       setEvents(d.messages.map((m: any) => ({ ...m.body, ts: m.ts, run_id: m.run_id })));
-    });
+    }).catch(() => {});
+    loadHistory();
     let ws: WebSocket, retry: any;
     const connect = () => {
       ws = new WebSocket(`ws://${location.host}/ws`);
       wsRef.current = ws;
-      ws.onopen = () => setConnected(true);
+      ws.onopen = () => { setConnected(true); loadHistory(); };
       ws.onclose = () => { setConnected(false); retry = setTimeout(connect, 1500); };
       ws.onmessage = (ev) => setEvents(prev => [...prev.slice(-400), JSON.parse(ev.data)]);
     };
@@ -97,6 +98,9 @@ export default function App() {
 function ChatTab({ events }: { events: Event[] }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  // the newest status event decides whether a "waiting" indicator is still live
+  const lastStatus = [...events].reverse().find(e => e.kind === "status");
+  const waiting = lastStatus && lastStatus.state === "waiting" ? (lastStatus as Event & { label?: string }) : null;
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [events.length]);
 
   const send = async () => {
@@ -115,7 +119,8 @@ function ChatTab({ events }: { events: Event[] }) {
             Try: <Cmd>search 2028 batch AI internships</Cmd> · <Cmd>connect gemini</Cmd> · <Cmd>send mail to x@y.com</Cmd> · <Cmd>track Google - STEP intern</Cmd>
           </div>
         )}
-        {events.map((e, i) => <EventView key={i} e={e} />)}
+        {events.filter(e => e.kind !== "status").map((e, i) => <EventView key={i} e={e} />)}
+        {waiting && <div className="text-xs text-amber-300 pl-2 animate-pulse">⏳ {waiting.text || `${waiting.label || "Working"}...`} (stops automatically if it takes too long)</div>}
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-slate-800 p-4">

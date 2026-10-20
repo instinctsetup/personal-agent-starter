@@ -45,6 +45,29 @@ async function toolCall<T>(runId: string, tool: string, input: unknown, fn: () =
   }
 }
 
+/** Hard cap on how long one chat turn may wait for the model before a visible failure message is shown. */
+export const CHAT_DEADLINE_MS = Number(process.env.AGENT_CHAT_DEADLINE_MS) || 100_000;
+const STATUS_TICK_MS = Number(process.env.AGENT_STATUS_TICK_MS) || 3_000;
+
+/** Run a slow step with a live "waiting ... Ns" status and a hard deadline, so the UI never sits silent. */
+export async function withProgress<T>(runId: string, label: string, fn: () => Promise<T>, deadlineMs = CHAT_DEADLINE_MS): Promise<T> {
+  const started = Date.now();
+  const tick = () => emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label, elapsed_s: Math.round((Date.now() - started) / 1000), text: `${label}... ${Math.round((Date.now() - started) / 1000)}s` }, false);
+  tick();
+  const interval = setInterval(tick, STATUS_TICK_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} took longer than ${Math.round(deadlineMs / 1000)}s, so I stopped waiting. Try again, or switch to a faster model (\`connect gemini\`, model gemini-2.5-flash).`)), deadlineMs);
+  });
+  try {
+    return await Promise.race([fn(), deadline]);
+  } finally {
+    clearInterval(interval);
+    clearTimeout(timer);
+    emit({ ts: Date.now(), run_id: runId, kind: "status", state: "done", label, elapsed_s: Math.round((Date.now() - started) / 1000) }, false);
+  }
+}
+
 export async function handleUserMessage(text: string): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
@@ -117,13 +140,15 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
 
-    if (lower === "inbox" || lower === "check mail" || lower === "check email") {
+    // natural-language email requests ("check my email", "any new mails?") - never fall through silently
+    const emailIntent = /\b(e-?mails?|inbox|gmail|mails?)\b/.test(lower) && !/^(send|connect|draft|write|compose)\b/.test(lower);
+    if (lower === "inbox" || lower === "check mail" || lower === "check email" || emailIntent) {
       const msgs = await toolCall(runId, "mail.inbox", {}, async () => {
         const { mailConfigured, listInbox } = await import("./mail.js");
         if (!mailConfigured()) return null;
         return listInbox(5);
       });
-      if (msgs === null) say(runId, "Email not connected yet - say `connect email`.");
+      if (msgs === null) say(runId, "Email isn't connected yet, so I can't read your inbox. Type `connect email` to set it up.");
       else say(runId, msgs.length ? msgs.map((m: any) => `- ${m.subject} (${m.from})`).join("\n") : "Inbox is empty.");
       return;
     }
@@ -351,8 +376,13 @@ export async function handleUserMessage(text: string): Promise<void> {
     }
 
     // ---- fall through to the model ------------------------------------------
-    const reply = await toolCall(runId, "model.chat", { text: t }, async () => provider().chat([{ role: "user", content: t }]));
-    say(runId, reply);
+    const p = provider();
+    if (p.offline) {
+      say(runId, `I didn't recognise that as a command, and no AI model is connected yet, so I can't chat freely. Type \`connect gemini\` to add a free model, or \`help\` to see what I can do.`);
+      return;
+    }
+    const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => p.chat([{ role: "user", content: t }])));
+    say(runId, reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.");
   } catch (err: any) {
     emit({ ts: Date.now(), run_id: runId, kind: "error", role: "agent", text: `Something failed: ${err?.message || err}` });
   }

@@ -196,41 +196,108 @@ export class GeminiProvider implements ModelProvider {
       .filter((m) => m.role !== 'system')
       .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
     if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: '' }] });
-    const res = await fetchWithRetry(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': this.apiKey,
-      },
-      body: JSON.stringify({
-        ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        contents,
-        generationConfig: {
-          // thinking models can spend small budgets on reasoning alone, so floor it
-          maxOutputTokens: Math.max(opts?.maxTokens ?? 800, 128),
-          temperature: opts?.temperature ?? 0.3,
-        },
-      }),
-    }, { step: 'chat' as GeminiStep, ...this.reqOpts }, GENERATE_TIMEOUT_MS);
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw classifyHttpError(res.status, body, this.model);
-    }
-    const data = (await res.json()) as {
-      candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+    const requestOpts = { step: 'chat' as GeminiStep, ...this.reqOpts };
+    const timeoutMs = requestOpts.timeoutMs ?? GENERATE_TIMEOUT_MS;
+
+    const call = async (maxOutputTokens: number, thinking: boolean): Promise<GeminiResult> => {
+      const res = await fetchWithRetry(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': this.apiKey },
+        body: JSON.stringify({
+          ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+          contents,
+          generationConfig: {
+            maxOutputTokens,
+            temperature: opts?.temperature ?? 0.3,
+            ...(thinking ? { thinkingConfig: thinkingConfigFor(this.model) } : {}),
+          },
+        }),
+      }, requestOpts, GENERATE_TIMEOUT_MS);
+      // the fetch timer only covers the headers - bound the body read too, so a stalled stream cannot hang the chat
+      const raw = await readBodyWithTimeout(res, timeoutMs);
+      if (!res.ok) throw classifyHttpError(res.status, raw, this.model);
+      let data: unknown;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        throw new GeminiError(`Gemini returned a response that is not JSON: ${raw.trim().slice(0, 120)}`, 'http', res.status);
+      }
+      return parseGeminiResponse(data);
     };
-    const content = (data.candidates?.[0]?.content?.parts ?? [])
-      .map((p) => p.text ?? '')
-      .join('')
-      .trim();
-    if (!content) {
-      const finish = data.candidates?.[0]?.finishReason;
+
+    // Thinking models spend maxOutputTokens on reasoning first, so the answer can be cut off to nothing.
+    // Give a generous budget, ask for light thinking, and retry once with a bigger budget if it still runs out.
+    const budget = Math.max(opts?.maxTokens ?? 0, DEFAULT_CHAT_MAX_TOKENS);
+    let thinking = true;
+    let result: GeminiResult;
+    try {
+      result = await call(budget, thinking);
+    } catch (err: any) {
+      // an older/unknown model may reject thinkingConfig - retry once without it
+      if (err instanceof GeminiError && err.code === 'http' && err.status === 400 && /think/i.test(err.message)) {
+        thinking = false;
+        result = await call(budget, thinking);
+      } else {
+        throw err;
+      }
+    }
+    if (!result.text && result.finishReason === 'MAX_TOKENS') {
+      result = await call(budget * 4, thinking);
+    }
+    if (!result.text) {
+      const why = result.blockReason
+        ? `the prompt was blocked (${result.blockReason})`
+        : result.finishReason
+          ? `finish reason: ${result.finishReason}`
+          : 'no text in the response';
       throw new GeminiError(
-        `Gemini returned an empty completion${finish ? ` (finish reason: ${finish})` : ''}. A thinking model can spend the whole token budget on reasoning - try again or raise the token limit.`,
+        `Gemini returned an empty reply (${why}).${result.finishReason === 'MAX_TOKENS' ? ' The model used its whole token budget on thinking - try again, or switch to gemini-2.5-flash with `connect gemini`.' : ' Try rephrasing, or run `npm run check:gemini`.'}`,
         'empty',
       );
     }
-    return content;
+    return result.text;
+  }
+}
+
+const DEFAULT_CHAT_MAX_TOKENS = 2048;
+
+interface GeminiResult {
+  text: string;
+  finishReason?: string;
+  blockReason?: string;
+}
+
+function thinkingConfigFor(model: string): Record<string, unknown> {
+  // ai.google.dev/gemini-api/docs/thinking (Oct 2026): gemini-3.8-flash supports low/medium/high (default medium)
+  // and cannot switch thinking off, so "low" is the fastest setting. If a model rejects the field we retry without it.
+  void model;
+  return { thinkingLevel: 'low' };
+}
+
+/** Pull the visible answer out of a generateContent response, skipping thought parts. */
+export function parseGeminiResponse(data: any): GeminiResult {
+  const candidate = data?.candidates?.[0];
+  const parts: any[] = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+  const text = parts
+    .filter((p) => p && p.thought !== true && typeof p.text === 'string')
+    .map((p) => p.text)
+    .join('')
+    .trim();
+  return { text, finishReason: candidate?.finishReason, blockReason: data?.promptFeedback?.blockReason };
+}
+
+async function readBodyWithTimeout(res: Response, timeoutMs: number): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      res.body?.cancel().catch(() => {});
+      reject(new GeminiError(`Gemini started answering but the reply stalled for ${Math.round(timeoutMs / 1000)}s. Try again.`, 'timeout'));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([res.text(), timeout]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
