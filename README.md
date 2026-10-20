@@ -4,11 +4,15 @@
 > **26-page PDF guide (with real screenshots):** https://drive.google.com/file/d/1Cl34FnBS-EK1JJ1-OHO0rvw4JTd4e181/view
 
 
-A local-first personal agent you run on your own machine: chat with it in a web UI,
-let it browse, sign up, apply, mail, schedule, and sync - with every consequential
-action behind an approval card you can edit before anything happens.
+A local-first personal agent you run on your own machine: chat with it in plain
+English, let it browse, sign up, apply, mail, schedule, remember, and sync - with
+every consequential action behind an approval card you can edit before anything
+happens, per-day caps on outgoing actions, durable multi-step plans, and a full
+trace of everything it did.
 
-**v2.0 (branch `v2`)** turns the CLI starter into a self-hosted web app.
+**v2.0** turns the CLI starter into a self-hosted web app. **v3** adds the agent
+layer on top: an LLM intent router (no command syntax to learn), durable plans,
+memory, boards, local models, a typed tool registry, and structured tracing.
 
 ## Quick start
 
@@ -41,7 +45,7 @@ with the "Desktop development with C++" workload - or keep better-sqlite3 on v12
   anti-bot evasion, no fingerprint spoofing** (default user agent, no webdriver
   patching). CAPTCHAs and 2FA are handed to you via the Browser tab's takeover mode.
 
-## The 6 tabs
+## The 7 tabs
 
 | Tab | What it does |
 |---|---|
@@ -51,24 +55,71 @@ with the "Desktop development with C++" workload - or keep better-sqlite3 on v12
 | Drive & Docs | Drive file list; upload/sync via chat (`upload <path> to drive`, `sync <dir> to drive`) |
 | Inbox & Outreach | IMAP inbox, cold-mail composer that routes through the approval card |
 | Vault & Scheduler | Credential list (usernames only), model router, scheduler jobs (pause/delete) |
+| Traces | Live run list + waterfall timeline: every tool call, model race and plan step as a timed span, errors in red |
 
 ## What you can say (chat)
 
+Plain English works for all of this - "can u apply to <url>" is fine. An LLM
+intent router turns your sentence into the same commands below (and chains
+multi-step requests into a durable plan). Exact forms if you want them:
+
 ```
-connect <gemini|model|email|drive|github|telegram|profile|anything>
+connect <gemini|groq|cerebras|github models|openrouter|model|email|drive|github|telegram|profile|anything>
 search <query>                        # keyless web search (DuckDuckGo, then Bing)
+hunt <query>                          # job hunt: shortlist -> "apply to 1,3" / "apply all"
 open / browse <url>                   # live browser
 sign up on <site> with google         # signup engine, OTP assist from your inbox
+signups                               # list completed signups
 apply to <job-url>                    # fills profile facts only; approval before submit
 track <Company> - <role>  /  applications
+plan <goal>  /  plans  /  resume plan <id>  /  cancel plan <id>
+caps  /  cap <action> <N>             # per-day limits on sends, applications, LinkedIn
+remember <fact>  /  memories  /  forget <id>
+board <pipeline|inbox|overview>  /  boards  /  unshare <kind>
+local  /  local setup  /  local on|off   # on-device models via Ollama
+skills                                # full tool manifest with risk tiers + caps
+traces  /  trace <run-id>             # structured run logs as span trees
 send mail to <addr>: <body>           # approval card, then real SMTP send
 inbox  /  check mail
 drive  /  upload <path> to drive [as doc]  /  sync <dir> to drive
 git init <name>  /  commit <path> [msg]  /  push <path>  /  create github repo <name>
 every 2 hours search AI internships   /  at 18:30 tracker  /  jobs
 linkedin  /  linkedin on  /  i accept the linkedin risk  /  linkedin feed
+linkedin message <profile-url>: <text>   # approval-gated, daily-capped
 vault  /  help
 ```
+
+## The v3 agent layer
+
+- **Intent router** - your message is normalized, matched against exact command
+  forms first, then classified by the connected model into the same commands.
+  Multi-step requests ("find X and mail me the top 3") become durable plans.
+- **Durable plans** - a plan is a checkpointed step list in SQLite. A failed step
+  is retried once, then the model proposes a corrected step; if it still fails
+  the plan pauses (never loses state) until you `resume plan <id>` or
+  `cancel plan <id>`. Rejections, expired approvals and cap denials are
+  PERMANENT - never retried, never routed around.
+- **Action caps** - per-day limits (default: 10 mails, 10 applications, 5
+  LinkedIn actions). Checked before anything is drafted; every action is
+  recorded in an append-only ledger. `caps` shows today, `cap <action> <N>` raises.
+- **Memory** - `remember <fact>` stores durable facts across sessions; relevant
+  memories are injected into the router and chat context. Secret-looking values
+  are refused (those belong in the vault). Extraction after chat turns is
+  automatic, and plan completions are summarized into memory.
+- **Boards** - live dashboards (pipeline kanban, inbox triage, overview) at
+  `/boards/<id>`, generated from live SQLite data at request time (no snapshots
+  to go stale). Each board has a share link; `unshare <kind>` rotates the token
+  and kills every old link.
+- **Local models** - `local setup` detects your GPU VRAM (nvidia-smi) and
+  recommends an honest Ollama model tier (4 GB -> ~2B class, 8 GB -> ~4B,
+  16 GB -> ~8B; under 2 GB is refused). A fast local 1B handles short commands;
+  a local 2B joins every cloud race. See docs/LOCAL-MODELS.md.
+- **Tool registry** - every tool is declared once (typed argument schema, risk
+  tier, cap key, approval gate) and the manifest is served at `/api/skills`.
+  Invariant under test: every identity or money tool is approval-gated.
+- **Structured tracing** - every run is a tree of spans (tool calls, model
+  races, plan steps) with timing and status, stored in SQLite, served at
+  `/api/traces`, and rendered live in the Traces tab.
 
 ## Connect an AI model (free options)
 
@@ -111,6 +162,16 @@ with base URL `https://api.groq.com/openai/v1` and a model like
 | Mistral | `https://api.mistral.ai/v1` | Free mode, no card, low evaluation limits |
 | Ollama (local, offline) | `http://localhost:11434/v1` | Runs on your laptop, no key (enter any text); needs a few GB RAM; weaker than Gemini |
 
+**Also first-class: `connect cerebras` and `connect github models`.** These get
+their own setup cards and join every model race automatically:
+- Cerebras (llama-3.3-70b) - free key at cloud.cerebras.ai, ~30 req/min and
+  ~1M tokens/day.
+- GitHub Models (openai/gpt-4o-mini) - free with a GitHub token from
+  github.com/settings/tokens (Models permission).
+
+Every chat answer is a race across all connected providers plus a local model
+when enabled: first good answer wins, and the Traces tab shows which one did.
+
 ## Bridges
 
 - **Telegram**: store a bot token (`connect telegram`), then `POST /api/bridge/telegram/start`.
@@ -135,7 +196,8 @@ with base URL `https://api.groq.com/openai/v1` and a model like
 ## Tests
 
 ```bash
-npm test    # 81 tests: v1 core + v2 vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail + providers (mock, OpenAI-compatible, Gemini)
+npm test    # 197 tests: v1 core + v2 (vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail/providers)
+            # + v3 (LLM router, boards, plans, caps, memory, local models, skill registry, tracing, help audit)
 ```
 
 ## v1 (tag `v1.0`)
