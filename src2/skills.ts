@@ -85,6 +85,7 @@ registerTool({ name: "mail.draft", description: "Draft an email with the model (
 registerTool({ name: "tracker.list", description: "List tracked applications", args: {}, risk: "read" });
 registerTool({ name: "tracker.add", description: "Track one application", args: { company: { type: "string", required: true }, role: { type: "string" } }, risk: "write" });
 registerTool({ name: "browser.navigate", description: "Open a URL in the live browser", args: { url: { type: "url", required: true } }, risk: "write" });
+registerTool({ name: "form.fill", description: "Fill a web/Google form end-to-end: true answers from profile+memory, asks for unknowns, review card, submit + confirmation screenshot", args: { url: { type: "url", required: true, description: "form URL" } }, risk: "identity", approval: true });
 registerTool({ name: "signup.google", description: "Sign up on a site with Google SSO or email+password (human takeover on OTP)", args: { site: { type: "string", required: true } }, risk: "identity", approval: true });
 registerTool({ name: "web.search", description: "Keyless web search (DuckDuckGo, then Bing)", args: { query: { type: "string", required: true } }, risk: "read" });
 registerTool({ name: "model.chat", description: "One model reply (the race)", args: { text: { type: "string", required: true } }, risk: "read" });

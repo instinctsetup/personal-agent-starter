@@ -18,6 +18,8 @@ import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 import { routeWithModel } from "./router.js";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { resolveModel, currentModel, PROVIDERS, type ProviderId } from "./models.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
@@ -642,6 +644,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
         "- signups - list completed signups",
         "- apply to <job-url> - fill profile facts only, approval before submit",
+        "- fill form <url> - Google Forms & web forms: reads every question, answers from your profile/memory, asks you for unknowns, review card before submit, confirmation screenshot",
         "- track <Company> - <role> / applications - application tracker",
         "- board <pipeline|inbox|overview> / boards - live shareable dashboards; unshare <kind> kills the link",
         "- plan <goal> / plans / resume plan <id> / cancel plan <id> - durable multi-step plans with retries + self-correction",
@@ -1206,6 +1209,62 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     }
 
     // ---- signup engine -------------------------------------------------
+    // ---- form filling: read questions -> profile/memory answers -> ask unknowns -> review -> submit ----
+    const mForm = cmd.match(/^fill (?:the |this |out )?form\s+(\S+)$/i) || cmd.match(/^fill\s+(https?:\/\/\S*(?:forms\.gle|docs\.google\.com\/forms)\S*)$/i);
+    if (mForm) {
+      const url = mForm[1];
+      say(runId, `Opening the form - I'll read every question, answer what I truly know from your profile and memory, and ask you for the rest. Watch the Browser tab if you like.`);
+      const result = await toolCall(runId, "form.fill", { url }, async () => {
+        const { runFormFill } = await import("./forms.js");
+        const { ProfileStore } = await import("../src/tools/profile.js");
+        const profile = new ProfileStore(DATA_DIR).get() as any;
+        return runFormFill({ url, profile, resumePath: profile.resumePath || undefined }, {
+          say: (text) => say(runId, text),
+          askFacts: async (qs) => {
+            if (pendingFacts) return {};
+            say(runId, [
+              ...qs.map((q, i) => `${i + 1}. ${q}`),
+              "",
+              "Reply with the answers (one per line, same order), or `skip` to leave them empty. I never invent answers for you.",
+            ].join("\n"));
+            const answers = await new Promise<Record<string, string> | null>((resolve) => {
+              const timer = setTimeout(() => {
+                if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
+              }, 10 * 60 * 1000);
+              pendingFacts = { questions: qs, resolve, timer };
+            });
+            if (answers === null) say(runId, "Skipped those - leaving them empty.");
+            return answers ?? {};
+          },
+          confirm: async (summary, answers) => {
+            const card = requestApproval("form_submit", summary, { url, answers }, runId);
+            say(runId, summary + "\n\nApprove submits the form; Reject leaves everything filled but unsubmitted.", { approval_id: card.id });
+            const res = await waitApproval(card.id);
+            return res.status === "approved";
+          },
+        });
+      });
+      if (result.status === "submitted") {
+        let saved = "";
+        if (result.screenshot) {
+          saved = join(DATA_DIR, `form-confirmation-${Date.now()}.jpg`);
+          writeFileSync(saved, result.screenshot);
+        }
+        emit({ ts: Date.now(), run_id: runId, kind: "status", state: "done", label: "form.fill", text: "form submitted" });
+        say(runId, [
+          `Submitted - the confirmation is on screen${saved ? ` and saved at ${saved}` : ""}.`,
+          `Answered ${Object.keys(result.answered).length} question(s) across ${result.pages} page(s).`,
+          result.unknowns.length ? `Left empty: ${result.unknowns.join(", ")}.` : "",
+        ].filter(Boolean).join("\n"), saved ? { screenshot: saved } : undefined);
+      } else {
+        emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "form.fill", text: `form not submitted (${result.status})` });
+        say(runId, result.status === "cancelled"
+          ? "Cancelled - the form stays filled in the Browser tab, nothing was submitted."
+          : `Couldn't finish (${result.status}). ${result.error || ""}`);
+      }
+      return;
+    }
+
     const mSignup = cmd.match(/^sign ?(?:me )?up (?:on|at|for) (\S+?)(?: with google)?$/i);
     if (mSignup) {
       const site = mSignup[1];
