@@ -12,7 +12,8 @@ import { MockProvider } from "../src/providers/mock.js";
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider } from "../src/providers/gemini.js";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
+export const FALLBACK_GEMINI_MODEL = "gemini-2.5-flash"; // stable free-tier fallback if the default is not found
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
 function provider() {
@@ -437,10 +438,32 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
   // live validation where possible
   if (service === "model" || service === "model key" || isGemini) {
     try {
+      if (isGemini) {
+        const { validateGeminiConnection } = await import("../src/providers/gemini.js");
+        const key = getSetting("model_api_key") || "";
+        if (!key) {
+          say(runId, "Saved, but validation failed: no Gemini API key stored - run `connect gemini` again and paste the key into the card.");
+          return "validation_failed";
+        }
+        const model = getSetting("model") || DEFAULT_GEMINI_MODEL;
+        try {
+          await validateGeminiConnection(model, key);
+          say(runId, `Model connection OK (${model}).`);
+        } catch (err: any) {
+          // unknown model id -> fall back to a known-valid free model once
+          if (err?.code === "model_not_found" && model !== FALLBACK_GEMINI_MODEL) {
+            await validateGeminiConnection(FALLBACK_GEMINI_MODEL, key);
+            setSetting("model", FALLBACK_GEMINI_MODEL);
+            say(runId, `"${model}" was not found on the Gemini API, so you were switched to ${FALLBACK_GEMINI_MODEL} (free tier). Connection OK.`);
+          } else {
+            throw err;
+          }
+        }
+        return "ok";
+      }
       const p = provider();
       await p.chat([{ role: "user", content: "ping" }], { maxTokens: 4 });
-      const fallback = isGemini ? DEFAULT_GEMINI_MODEL : DEFAULT_OPENAI_MODEL;
-      say(runId, `Model connection OK (${getSetting("model") || fallback}).`);
+      say(runId, `Model connection OK (${getSetting("model") || DEFAULT_OPENAI_MODEL}).`);
       return "ok";
     } catch (err: any) {
       say(runId, `Saved, but validation failed: ${err?.message || err}`);
