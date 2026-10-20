@@ -18,15 +18,15 @@ let server: Server;
 let jobUrl: string;
 const ddgFixture = (url: string) => `<html><body>
 <div class="result results_links"><a class="result__a" href="${url}/job">SDE Intern - Acme Corp</a><a class="result__snippet">Summer 2027 internship, backend.</a></div>
-<div class="result results_links"><a class="result__a" href="${url}/job">Frontend Intern - Beta</a><a class="result__snippet">React internship.</a></div>
-<div class="result results_links"><a class="result__a" href="${url}/job">Data Intern - Gamma</a><a class="result__snippet">Analytics internship.</a></div>
+<div class="result results_links"><a class="result__a" href="${url}/job2">Frontend Intern - Beta</a><a class="result__snippet">React internship.</a></div>
+<div class="result results_links"><a class="result__a" href="${url}/job3">Data Intern - Gamma</a><a class="result__snippet">Analytics internship.</a></div>
 </body></html>`;
 
 test.before(async () => {
   const jobForm = readFileSync(join(process.cwd(), "test/fixtures/job-form.html"), "utf8");
   server = createServer((req, res) => {
     res.writeHead(200, { "content-type": "text/html" });
-    res.end(req.url === "/job" ? jobForm : "<html><body>ok</body></html>");
+    res.end(req.url?.startsWith("/job") ? jobForm : "<html><body>ok</body></html>");
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   jobUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -64,7 +64,7 @@ test("hunt shortlists, tracks as Scouted, and 'apply to 1' drives the real apply
   assert.match(out, /apply to 1/);
   const scouted = listApplications().filter((a) => a.status === "Scouted");
   assert.equal(scouted.length, 3, "all three hits tracked as Scouted");
-  assert.ok(scouted.every((a) => a.url === `${jobUrl}/job`));
+  assert.deepEqual(scouted.map((a) => a.url).sort(), [`${jobUrl}/job`, `${jobUrl}/job2`, `${jobUrl}/job3`].sort());
 
   // pick the first one: the real applier starts and asks its open question
   const done = handleUserMessage("apply to 1").catch(() => {});

@@ -23,6 +23,7 @@ import { planRename, planDownloadsCleanup, applyMoves, undoLast, downloadsDir, f
 import { startWatch, stopWatch, listWatchers } from "./watcher.js";
 import { setRoutine, getRoutine, listRoutines, deleteRoutine } from "./routines.js";
 import { ocrImage, readScreenText } from "./ocr.js";
+import { rankResults } from "./jobflags.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -727,16 +728,22 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       }
       const host = (u: string) => { try { return new URL(u).hostname; } catch { return u; } };
       const tracked = new Set(listApplications().map((a) => a.url).filter(Boolean));
-      for (const r of results) {
+      // cross-board de-dup + scam/stale flagging: the same posting on two portals
+      // collapses into its first sighting; flagged postings sink to the bottom with
+      // their warnings attached instead of being silently dropped.
+      const ranked = rankResults(results);
+      const shortlist = ranked.filter((r) => !r.dupOf);
+      const dupCount = ranked.length - shortlist.length;
+      for (const r of shortlist) {
         if (!tracked.has(r.url)) addApplication({ company: host(r.url), role: r.title.slice(0, 80), portal: host(r.url), url: r.url, status: "Scouted" });
       }
-      pendingHuntByChannel.set(channel, { results, expires: Date.now() + 15 * 60_000 });
+      pendingHuntByChannel.set(channel, { results: shortlist, expires: Date.now() + 15 * 60_000 });
       say(runId, [
-        `Top ${results.length} hits for "${q}":`,
-        ...results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${tracked.has(r.url) ? " (already tracked)" : ""}\n   ${r.snippet}`),
+        `Top ${shortlist.length} hits for "${q}"${dupCount ? ` (${dupCount} cross-board duplicate(s) collapsed)` : ""}:`,
+        ...shortlist.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${tracked.has(r.url) ? " (already tracked)" : ""}${r.flags.length ? `\n   WARNING: ${r.flags.join("; ")}` : ""}\n   ${r.snippet}`),
         "",
         "Reply `apply to 1` (or `apply to 1,3`, `apply all`) within 15 min and I'll fill those forms. New ones sit on the Jobs tab as Scouted.",
-      ].join("\n"), { results });
+      ].join("\n"), { results: shortlist });
       return;
     }
 
