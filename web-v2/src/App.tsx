@@ -45,7 +45,12 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([]);
   const [connected, setConnected] = useState(false);
   const [sys, setSys] = useState<SysSettings>({});
+  const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/status").then(r => r.json()).then(setAuth).catch(() => setAuth({ enabled: false, authed: true }));
+  }, []);
 
   useEffect(() => {
     const load = () => fetch("/api/settings").then(r => r.json()).then(setSys).catch(() => {});
@@ -61,7 +66,7 @@ export default function App() {
     loadHistory();
     let ws: WebSocket, retry: any;
     const connect = () => {
-      ws = new WebSocket(`ws://${location.host}/ws`);
+      ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
       wsRef.current = ws;
       ws.onopen = () => { setConnected(true); loadHistory(); };
       ws.onclose = () => { setConnected(false); retry = setTimeout(connect, 1500); };
@@ -70,6 +75,9 @@ export default function App() {
     connect();
     return () => { clearTimeout(retry); ws?.close(); };
   }, []);
+
+  if (auth === null) return <div className="h-screen bg-[#0a0e14]" />;
+  if (auth.enabled && !auth.authed) return <LoginScreen onLogin={() => setAuth({ enabled: true, authed: true })} />;
 
   return (
     <div className="flex h-screen bg-[#0a0e14] text-slate-100">
@@ -599,6 +607,42 @@ function PlaceholderTab({ name }: { name: string }) {
     <div className="p-6">
       <h2 className="text-lg font-semibold mb-2">{name}</h2>
       <div className="text-slate-500 text-sm">This module is being wired up in the v2.0 build.</div>
+    </div>
+  );
+}
+
+/* ================= LOGIN ================= */
+function LoginScreen({ onLogin }: { onLogin: () => void }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!pw || busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: pw }) });
+      if (r.ok) onLogin();
+      else setErr("wrong password");
+    } catch { setErr("could not reach the server"); }
+    setBusy(false);
+  };
+  return (
+    <div className="h-screen bg-[#0a0e14] text-slate-100 flex items-center justify-center">
+      <div className="w-80 rounded-xl border border-slate-800 bg-[#0d1117] p-6 space-y-4">
+        <div>
+          <div className="font-bold text-lg">Personal Agent</div>
+          <div className="text-xs text-slate-400">this control center is protected</div>
+        </div>
+        <input type="password" value={pw} autoFocus onChange={e => setPw(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && submit()} placeholder="password"
+          className="w-full rounded-lg bg-slate-900 border border-slate-700 px-3 py-2 text-sm outline-none focus:border-sky-500" />
+        {err && <div className="text-xs text-red-400">{err}</div>}
+        <button onClick={submit} disabled={busy}
+          className="w-full rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 px-3 py-2 text-sm font-medium">
+          {busy ? "checking…" : "unlock"}
+        </button>
+      </div>
     </div>
   );
 }

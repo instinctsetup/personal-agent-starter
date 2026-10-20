@@ -7,8 +7,9 @@ const app = await buildApp();
 const { startScheduler } = await import("./scheduler.js");
 const { handleUserMessage } = await import("./agent2.js");
 startScheduler(async (cmd) => handleUserMessage(cmd));
-await app.listen({ port: PORT, host: "127.0.0.1" });
-console.log(`personal-agent v2 control center: http://127.0.0.1:${PORT}`);
+const HOST = process.env.HOST || "127.0.0.1";
+await app.listen({ port: PORT, host: HOST });
+console.log(`personal-agent v2 control center: http://${HOST}:${PORT}`);
 
 if (process.env.NO_OPEN !== "1") {
   try {

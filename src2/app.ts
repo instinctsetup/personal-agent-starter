@@ -15,10 +15,12 @@ import { listJobs, setJobEnabled, deleteJob } from "./scheduler.js";
 import { listInbox, mailConfigured } from "./mail.js";
 import { listSignups } from "./signup.js";
 import { handleSlackEvent, verifySlackSignature, startTelegramBridge } from "./bridge.js";
+import { registerAuth } from "./auth.js";
 import { getCredential } from "./vault.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
+  registerAuth(app);
   await app.register(fastifyWebsocket);
 
   const clients = new Set<WebSocket>();
