@@ -68,6 +68,37 @@ export function findMailAccount(user: string): MailAccount | null {
   return listMailAccounts().find((a) => a.user.toLowerCase() === user.toLowerCase()) || null;
 }
 
+/** One shared IMAP connection per credential set: connecting + authenticating costs
+ *  1-2s every time, so per-call connects made every mail search feel laggy. The client
+ *  recycles itself when the account changes or the connection drops. */
+let sharedImap: { key: string; client: ImapFlow } | null = null;
+let sharedImapInFlight: Promise<ImapFlow> | null = null;
+
+async function imapClient(): Promise<ImapFlow> {
+  const { user, pass, imapHost } = mailCreds();
+  const key = `${imapHost}|${user}|${pass.length}`;
+  if (sharedImap && sharedImap.key === key && sharedImap.client.usable) return sharedImap.client;
+  if (sharedImapInFlight) return sharedImapInFlight; // one connect at a time
+  if (sharedImap) { await sharedImap.client.logout().catch(() => {}); sharedImap = null; }
+  sharedImapInFlight = (async () => {
+    const client = new ImapFlow({ host: imapHost, port: 993, secure: true, auth: { user, pass }, logger: false });
+    client.on("error", () => { sharedImap = null; }); // dropped by the server/network - reconnect next call
+    await client.connect();
+    sharedImap = { key, client };
+    return client;
+  })();
+  try {
+    return await sharedImapInFlight;
+  } finally {
+    sharedImapInFlight = null;
+  }
+}
+
+/** Tests drop the shared connection so no socket lingers. */
+export async function closeImapForTests(): Promise<void> {
+  if (sharedImap) { await sharedImap.client.logout().catch(() => {}); sharedImap = null; }
+}
+
 /** Test seam: replaced only by tests; production always reads live IMAP. */
 let inboxFetcher: ((limit: number) => Promise<MailSummary[]>) | null = null;
 let bodyFetcher: ((uid: number, maxChars: number) => Promise<string>) | null = null;
@@ -145,25 +176,19 @@ export async function readMailBody(uid: number, maxChars = 2000): Promise<string
     const all = await inboxFetcher(50);
     return (all.find((x) => x.uid === uid)?.snippet || "").slice(0, maxChars);
   }
-  const { user, pass, imapHost } = mailCreds();
-  const client = new ImapFlow({ host: imapHost, port: 993, secure: true, auth: { user, pass }, logger: false });
-  await client.connect();
+  const client = await imapClient();
+  const lock = await client.getMailboxLock("INBOX");
   try {
-    const lock = await client.getMailboxLock("INBOX");
-    try {
-      for await (const msg of client.fetch(String(uid), { bodyParts: ["text"] }, { uid: true })) {
-        return (msg.bodyParts?.get("text")?.toString("utf8") ?? "").replace(/\s+\n/g, "\n").slice(0, maxChars);
-      }
-      return "";
-    } finally { lock.release(); }
-  } finally { await client.logout().catch(() => {}); }
+    for await (const msg of client.fetch(String(uid), { bodyParts: ["text"] }, { uid: true })) {
+      return (msg.bodyParts?.get("text")?.toString("utf8") ?? "").replace(/\s+\n/g, "\n").slice(0, maxChars);
+    }
+    return "";
+  } finally { lock.release(); }
 }
 
 export async function listInbox(limit = 15): Promise<MailSummary[]> {
-  const { user, pass, imapHost } = mailCreds();
-  const client = new ImapFlow({ host: imapHost, port: 993, secure: true, auth: { user, pass }, logger: false });
-  await client.connect();
-  try {
+  const client = await imapClient();
+  {
     const lock = await client.getMailboxLock("INBOX");
     try {
       const count = client.mailbox && typeof client.mailbox === "object" ? (client.mailbox as any).exists : 0;
@@ -182,7 +207,7 @@ export async function listInbox(limit = 15): Promise<MailSummary[]> {
       }
       return out.reverse();
     } finally { lock.release(); }
-  } finally { await client.logout().catch(() => {}); }
+  }
 }
 
 export async function sendMail(to: string, subject: string, body: string, opts: { from?: string } = {}): Promise<{ simulated: boolean; messageId?: string; from: string }> {
