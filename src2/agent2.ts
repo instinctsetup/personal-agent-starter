@@ -1,7 +1,9 @@
 /** v2 chat orchestration: command -> streamed events -> tools -> approvals. */
 import { db } from "./db.js";
-import { emit, newRunId, type AgentEvent } from "./bus.js";
+import { emit, newRunId, onEvent, type AgentEvent } from "./bus.js";
 import { requestApproval, waitApproval } from "./approvals.js";
+import { checkCap, recordAction, capStatus, setCap, DEFAULT_CAPS } from "./caps.js";
+import { createPlan, getPlan, listPlans, cancelPlan, runPlan, type Plan } from "./plans.js";
 import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
@@ -285,6 +287,12 @@ async function linkedinTools() {
 
 /** The apply flow for one posting: fill profile facts, ask missing ones in chat, approval card before submit. */
 async function runApplyFlow(runId: string, url: string): Promise<void> {
+  const cap = checkCap("apply");
+  if (!cap.allowed) {
+    emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "apply", text: "apply denied: daily cap reached" });
+    say(runId, `Daily application cap reached (${cap.used}/${cap.cap}). I won't start another one today - say \`cap apply <N>\` to raise it.`);
+    return;
+  }
   say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
   const result = await toolCall(runId, "jobs.apply", { url }, async () => {
     const { runJobApplication } = await import("../src/tools/apply.js");
@@ -317,9 +325,11 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
     });
   });
   if (result.status === "submitted") {
+    recordAction("apply", url);
     addApplication({ company: new URL(url).hostname, role: "", portal: new URL(url).hostname, url, status: "Applied" });
     say(runId, `Submitted. Filled ${result.filled.length} field(s). Tracked in Jobs & Tracker.`);
   } else {
+    emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "apply", text: `apply not submitted (${result.status})` });
     say(runId, `Not submitted (${result.status}). ${result.missing.length ? `Missing facts: ${result.missing.join(", ")}. Update with \`connect profile\`.` : result.summary || ""}`);
   }
 }
@@ -390,6 +400,50 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     }
   }
 
+    const planExecutor = async (cmd: string): Promise<{ ok: boolean; error?: string; permanent?: boolean }> => {
+      const start = Date.now();
+      const fails: string[] = [];
+      let denied = false; // a denial (user rejected, approval expired, cap) is a permanent failure: retrying would fight the user's "no"
+      const off = onEvent((e) => {
+        if (e.ts < start) return;
+        if (e.kind === "error") fails.push(String(e.text || e.label || "step error"));
+        if (e.kind === "status" && (e as any).state === "denied") { denied = true; fails.push(String(e.text || "denied")); }
+      });
+      try {
+        await handleUserMessage(cmd, true);
+      } catch (e: any) {
+        off();
+        return { ok: false, error: String(e?.message || e) };
+      }
+      off();
+      return fails.length ? { ok: false, error: fails[0], permanent: denied } : { ok: true };
+    };
+    const planFixer = async (goal: string, step: { cmd: string; error?: string }): Promise<string | null> => {
+      if (provider().offline) return null;
+      const re = await routeWithModel(
+        `I tried "${step.cmd}" but it failed: ${step.error || "unknown error"}. Give me ONE different command that still makes progress on this goal: ${goal}`,
+        (msgs) => withProgress(runId, "Re-planning a failed step", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)),
+      );
+      return re && re.kind === "commands" && re.commands.length ? re.commands[0] : null;
+    };
+    const runPlanWithUi = async (p: Plan): Promise<Plan> => {
+      say(runId, `Plan ${p.id}: "${p.goal}" - ${p.steps.length} step(s). Each step is checkpointed; a failure pauses the plan instead of losing it.`);
+      const done = await runPlan(p, planExecutor, planFixer, {
+        onStep: (pl, i, phase) => {
+          const s = pl.steps[i];
+          if (phase === "start") emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label: `plan ${pl.id} step ${i + 1}/${pl.steps.length}`, text: `Step ${i + 1}/${pl.steps.length}: ${s.cmd}` }, false);
+          if (phase === "retry") say(runId, `Step ${i + 1} failed (${s.error || "error"}) - retrying once.`);
+          if (phase === "corrected") say(runId, `Step ${i + 1} failed twice, so I'm trying a different way: ${s.cmd}`);
+          if (phase === "done") emit({ ts: Date.now(), run_id: runId, kind: "status", state: "done", label: `plan ${pl.id} step ${i + 1} done`, text: `Step ${i + 1}/${pl.steps.length} done` }, false);
+          if (phase === "failed") say(runId, `Step ${i + 1} "${s.cmd}" failed: ${s.error || "unknown error"}.`);
+        },
+      });
+      if (done.status === "done") say(runId, `Plan ${done.id} finished - all ${done.steps.length} step(s) done.`);
+      else if (done.status === "paused") say(runId, `Plan ${done.id} is paused at the failed step. Fix the cause and say \`resume plan ${done.id}\`, or \`cancel plan ${done.id}\`.`);
+      return done;
+    };
+
+
   try {
     // LLM intent router: plain English -> canonical commands (regex cascade stays as offline fallback + executor)
     if (!routed && !provider().offline) {
@@ -400,14 +454,13 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return;
       }
       if (route && route.kind === "commands" && route.commands.length) {
-        if (route.commands.length > 1) {
-          say(runId, `Plan, ${route.commands.length} steps:\n${route.commands.map((c, i) => `${i + 1}) ${c}`).join("\n")}`);
+        if (route.commands.length === 1) {
+          await handleUserMessage(route.commands[0], true);
+          return;
         }
-        for (const [i, c] of route.commands.entries()) {
-          if (route.commands.length > 1) emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label: `Step ${i + 1}/${route.commands.length}: ${c}`, text: `Step ${i + 1}/${route.commands.length}: ${c}` }, false);
-          await handleUserMessage(c, true);
-        }
-        if (route.commands.length > 1) emit({ ts: Date.now(), run_id: runId, kind: "status", state: "done", label: "plan", text: "plan done" }, false);
+        // multi-step: durable plan with checkpoints, retries and self-correction (same machinery as "plan <goal>")
+        say(runId, `Plan, ${route.commands.length} steps:\n${route.commands.map((c, i) => `${i + 1}) ${c}`).join("\n")}`);
+        await runPlanWithUi(createPlan(t, route.commands));
         return;
       }
       if (route && route.kind === "chat") {
@@ -431,6 +484,8 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- apply to <job-url> - fill profile facts only, approval before submit",
         "- track <Company> - <role> / applications - application tracker",
         "- board <pipeline|inbox|overview> / boards - live shareable dashboards; unshare <kind> kills the link",
+        "- plan <goal> / plans / resume plan <id> / cancel plan <id> - durable multi-step plans with retries + self-correction",
+        "- caps / cap <action> <N> - per-day limits on sends and applications",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -497,6 +552,62 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       return;
     }
 
+    // ---- durable plans: goal -> checkpointed steps -> retries + self-correction ----
+    const mPlan = cmd.match(/^plan[\s:]+([\s\S]+)$/i);
+    if (mPlan) {
+      const goal = mPlan[1].trim();
+      if (provider().offline) { say(runId, "Planning needs a connected model - say `connect groq` or `connect gemini` first (both free)."); return; }
+      const route = await routeWithModel(goal, (msgs) => withProgress(runId, "Planning the steps", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)));
+      if (route && route.kind === "clarify") {
+        pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
+        say(runId, route.question);
+        return;
+      }
+      if (!route || route.kind !== "commands" || !route.commands.length) {
+        say(runId, "I couldn't break that into concrete steps. Name the actions (e.g. \"plan hunt react internships and track the results\").");
+        return;
+      }
+      await runPlanWithUi(createPlan(goal, route.commands));
+      return;
+    }
+    if (lower === "plans") {
+      const ps = listPlans(10);
+      say(runId, ps.length
+        ? ps.map((p) => `- [${p.status}] plan ${p.id}: ${p.goal} (${p.steps.filter((s) => s.status === "done").length}/${p.steps.length} steps)`).join("\n")
+        : "No plans yet. Try \"plan hunt backend internships and track what you find\".");
+      return;
+    }
+    const mResume = cmd.match(/^(?:resume|retry)\s+plan\s+([a-f0-9]+)$/i);
+    if (mResume) {
+      const p = getPlan(mResume[1]);
+      if (!p) { say(runId, `No plan with id ${mResume[1]}. Say \`plans\` to list them.`); return; }
+      if (p.status === "done") { say(runId, `Plan ${p.id} already finished.`); return; }
+      if (p.status === "cancelled") { say(runId, `Plan ${p.id} was cancelled - start a new one with \`plan <goal>\`.`); return; }
+      await runPlanWithUi(p);
+      return;
+    }
+    const mCancelPlan = cmd.match(/^cancel\s+plan\s+([a-f0-9]+)$/i);
+    if (mCancelPlan) {
+      const p = cancelPlan(mCancelPlan[1]);
+      say(runId, p ? `Plan ${p.id} cancelled - remaining steps skipped. Its checkpoints stay on record.` : `No plan with id ${mCancelPlan[1]}.`);
+      return;
+    }
+
+    // ---- per-action daily caps ----------------------------------------------
+    const CAP_ALIASES: Record<string, string> = { "send mail": "send_mail", mail: "send_mail", email: "send_mail", apply: "apply", applications: "apply", "linkedin message": "linkedin_message", "linkedin invite": "linkedin_invite" };
+    if (lower === "caps") {
+      say(runId, "Today's action caps (used/limit):\n" + capStatus().map((c) => `- ${c.action.replace(/_/g, " ")}: ${c.used}/${c.cap}`).join("\n") + "\nRaise one with \"cap send mail 20\".");
+      return;
+    }
+    const mCap = cmd.match(/^cap\s+([a-z ]+?)\s+(\d+)$/i);
+    if (mCap) {
+      const action = CAP_ALIASES[mCap[1].toLowerCase().trim()];
+      if (!action) { say(runId, `Unknown action "${mCap[1]}". Caps exist for: ${Object.keys(CAP_ALIASES).join(", ")}.`); return; }
+      setCap(action, Number(mCap[2]));
+      say(runId, `Cap updated: ${action.replace(/_/g, " ")} now allows ${mCap[2]}/day.`);
+      return;
+    }
+
     // ---- boards: live shareable dashboards ---------------------------------
     const boardUrl = (b: { id: string; share_token: string }) => {
       const base = (getSetting("public_url") || `http://localhost:${process.env.PORT || 8787}`).replace(/\/$/, "");
@@ -542,6 +653,12 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     // ---- plain-English email send (draft -> Send/Edit/Cancel card -> SMTP only on Send) ----
     const sendIntent = parseSendIntent(t);
     if (sendIntent) {
+      const cap = checkCap("send_mail");
+      if (!cap.allowed) {
+        emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "send_mail", text: "send denied: daily cap reached" });
+        say(runId, `Daily send cap reached (${cap.used}/${cap.cap} emails today). Nothing was drafted or sent - say \`cap send mail <N>\` to raise it.`);
+        return;
+      }
       const { listMailAccounts, findMailAccount, mailConfigured } = await import("./mail.js");
       const accounts = listMailAccounts();
       if (sendIntent.from && !findMailAccount(sendIntent.from)) {
@@ -584,6 +701,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       ].join("\n"), { approval_id: card.id });
       const res = await waitApproval(card.id);
       if (res.status !== "approved") {
+        emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "send_mail", text: res.status === "expired" ? "send approval expired" : "send rejected by user" });
         say(runId, res.status === "expired" ? "Approval expired - nothing sent." : "Cancelled - nothing sent.");
         return;
       }
@@ -602,6 +720,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
           const { sendMail } = await import("./mail.js");
           return sendMail(pl.to, pl.subject || "(no subject)", pl.body || "", { from: pl.from });
         });
+        recordAction("send_mail", String(pl.to));
         say(runId, `Email sent to ${pl.to} from ${result.from}.`);
       } catch (err: any) {
         say(runId, `Couldn't send: ${err?.message || err}. Nothing was sent - check the mail settings (\`connect email\`) and try again.`);

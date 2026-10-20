@@ -33,6 +33,9 @@ export const COMMAND_GRAMMAR = `
 - vault | drive
 - upload <path> to drive [as doc] | sync <dir> to drive
 - git init <name> | commit <path> [msg] | push <path> | create github repo <name> | git status <path>
+- plan <goal>   (durable multi-step plan: checkpointed, retried, resumable - use for "do X then Y then Z" goals)
+- plans | resume plan <id> | cancel plan <id>
+- caps | cap <action> <N>   (daily limits)
 - board <pipeline|inbox|overview>   (live shareable dashboard link)
 - boards   (list dashboard links)
 - unshare <pipeline|inbox|overview>   (kill the share link, mint a new one)
