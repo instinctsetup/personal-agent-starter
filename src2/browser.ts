@@ -1,10 +1,9 @@
 /** Live browser engine: one persistent Playwright context the daemon drives and the UI watches. */
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { DATA_DIR } from "./db.js";
 
-let browser: Browser | null = null;
 let context: BrowserContext | null = null;
 let page: Page | null = null;
 let userControl = false; // when true, agent pauses automation so the human can solve CAPTCHA/2FA
@@ -14,7 +13,10 @@ export function setUserControl(v: boolean): void { userControl = v; }
 
 export async function ensureBrowser(): Promise<Page> {
   if (page && !page.isClosed()) return page;
-  if (!browser) {
+  // Track the context itself: for a persistent context, context.browser() is null, so
+  // keying off a Browser handle silently relaunched a second context on the same
+  // profile dir whenever the page had been closed (profile-lock errors, lost state).
+  if (!context) {
     mkdirSync(join(DATA_DIR, "browser-profile"), { recursive: true });
     context = await chromium.launchPersistentContext(join(DATA_DIR, "browser-profile"), {
       headless: true,
@@ -23,10 +25,9 @@ export async function ensureBrowser(): Promise<Page> {
       args: ["--no-sandbox"],
       viewport: { width: 1280, height: 800 },
     });
-    browser = context.browser() as unknown as Browser;
   }
-  const pages = context!.pages();
-  page = pages.find((p) => !p.isClosed()) ?? (await context!.newPage());
+  const pages = context.pages();
+  page = pages.find((p) => !p.isClosed()) ?? (await context.newPage());
   return page;
 }
 
@@ -79,5 +80,5 @@ export async function detectChallenge(): Promise<string | null> {
 
 export async function closeBrowser(): Promise<void> {
   await context?.close().catch(() => {});
-  browser = null; context = null; page = null;
+  context = null; page = null;
 }

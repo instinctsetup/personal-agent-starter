@@ -42,17 +42,29 @@ test("'can u track Google - STEP intern' adds to the tracker", async () => {
   assert.match(texts(evs), /Tracked: Google - STEP intern/);
 });
 
-test("'can u apply to <url>' runs the applier end-to-end against a fixture form", async () => {
+test("'can u apply to <url>' runs the applier; unknown questions are asked in chat, 'skip' leaves them empty", async () => {
   const html = readFileSync(join(process.cwd(), "test/fixtures/job-form.html"), "utf8");
   const server: Server = createServer((_req, res) => { res.writeHead(200, { "content-type": "text/html" }); res.end(html); });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/job`;
   try {
-    const evs = await runChat(`can u apply to ${url}`);
-    assert.ok(tools(evs).includes("jobs.apply"), "apply intent reaches jobs.apply");
-    // empty profile -> the applier asks for facts instead of inventing them; nothing submitted
-    assert.match(texts(evs), /Not submitted \(needs-facts\)/);
-    assert.ok(!evs.some((e) => e.kind === "approval"), "no submit approval requested when facts are missing");
+    const events: any[] = [];
+    const off = onEvent((e) => events.push(e));
+    const done = handleUserMessage(`can u apply to ${url}`).catch(() => {});
+    // empty profile -> the applier asks for the unknown required fields instead of inventing them
+    let asked = false;
+    for (let i = 0; i < 600 && !asked; i++) {
+      asked = events.some((e) => e.kind === "text" && /fact\(s\) I don't have/.test(e.text || ""));
+      if (!asked) await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(asked, "the form's open questions are asked in chat");
+    assert.ok(events.some((e) => e.kind === "tool_call" && e.tool === "jobs.apply"), "apply intent reaches jobs.apply");
+    assert.match(texts(events), /Why do you want to work here/);
+    await handleUserMessage("skip").catch(() => {});
+    await done;
+    off();
+    assert.match(texts(events), /Not submitted \(needs-facts\)/);
+    assert.ok(!events.some((e) => e.kind === "approval"), "no submit approval requested when facts are missing");
   } finally { server.closeAllConnections(); server.close(); }
 });
 

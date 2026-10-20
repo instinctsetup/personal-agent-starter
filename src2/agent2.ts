@@ -149,12 +149,35 @@ export function normalizeCommand(t: string): string {
   return s.trim();
 }
 
+/** One pending "the form needs these facts" question set from the applier; the next chat message answers it. */
+let pendingFacts: { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout> } | null = null;
+
 export async function handleUserMessage(text: string): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
   const cmd = normalizeCommand(t);
   const lower = cmd.toLowerCase();
+
+  // an apply flow is waiting for missing facts - this message is the answer, not a new command
+  if (pendingFacts) {
+    const p = pendingFacts;
+    pendingFacts = null;
+    clearTimeout(p.timer);
+    if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
+      p.resolve(null);
+    } else {
+      const lines = t.split(/\n+/).map((s) => s.trim()).filter(Boolean).map((s) => s.replace(/^\d+[.)]\s*/, ""));
+      const answers: Record<string, string> = {};
+      if (p.questions.length === 1) {
+        answers[p.questions[0]] = lines.join("\n");
+      } else {
+        p.questions.forEach((q, i) => { if (lines[i]) answers[q] = lines[i]; });
+      }
+      p.resolve(answers);
+    }
+    return;
+  }
 
   try {
     if (lower === "help" || lower === "commands") {
@@ -352,7 +375,23 @@ export async function handleUserMessage(text: string): Promise<void> {
         const { ProfileStore } = await import("../src/tools/profile.js");
         const profile = new ProfileStore(DATA_DIR).get();
         return runJobApplication({ url, profile, headless: true, dataDir: DATA_DIR }, {
-          askFacts: async () => ({}), // unknown questions surface as `missing` instead of guesses
+          askFacts: async (qs: string[]) => {
+            if (pendingFacts) return {}; // another apply is already asking - do not stack questions
+            say(runId, [
+              `The form needs ${qs.length} fact(s) I don't have:`,
+              ...qs.map((q, i) => `${i + 1}. ${q}`),
+              "",
+              "Reply with the answers (one per line, same order), or `skip` to leave them empty. I never invent facts for you.",
+            ].join("\n"));
+            const answers = await new Promise<Record<string, string> | null>((resolve) => {
+              const timer = setTimeout(() => {
+                if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
+              }, 10 * 60 * 1000);
+              pendingFacts = { questions: qs, resolve, timer };
+            });
+            if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
+            return answers ?? {};
+          },
           confirmSubmit: async (summary: string) => {
             const card = requestApproval("submit_application", summary, { url }, runId);
             say(runId, "Review the application summary above - Approve submits, Reject cancels.", { approval_id: card.id });
