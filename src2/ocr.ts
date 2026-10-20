@@ -45,12 +45,8 @@ export async function captureScreen(): Promise<string> {
     `$bmp.Save('${out.replace(/'/g, "''")}', [System.Drawing.Imaging.ImageFormat]::Png);`,
     "$g.Dispose(); $bmp.Dispose();",
   ].join(" ");
-  await new Promise<void>((resolve, reject) => {
-    execFile("powershell", ["-NoProfile", "-Command", ps], { timeout: 15000, windowsHide: true }, (err, stdout, stderr) => {
-      if (err) reject(new Error(String(stderr || err.message)));
-      else resolve();
-    });
-  });
+  const { runPs } = await import("./winops.js"); // spawn-hardened: absolute System32 path first, real errors
+  await runPs(ps, undefined, 15000);
   if (!existsSync(out)) throw new Error("Screen capture produced no file.");
   return out;
 }

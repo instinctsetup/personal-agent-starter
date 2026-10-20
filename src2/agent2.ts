@@ -1565,8 +1565,8 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       try {
         const clip = await toolCall(runId, "clipboard.read", {}, () => clipboardRead());
         say(runId, clip.trim() ? `On your clipboard:\n\n${clip}` : "Your clipboard is empty (or holds something that isn't text).");
-      } catch {
-        say(runId, "I couldn't read the clipboard on this machine.");
+      } catch (err: any) {
+        say(runId, `I couldn't read the clipboard on this machine. The real error: ${String(err?.message || err).slice(0, 300)}`);
       }
       return;
     }
@@ -1576,8 +1576,8 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       try {
         await toolCall(runId, "clipboard.write", { length: mCopy[1].length }, () => clipboardWrite(mCopy[1]));
         say(runId, `Copied ${mCopy[1].length} character(s) to your clipboard.`);
-      } catch {
-        say(runId, "I couldn't write to the clipboard on this machine.");
+      } catch (err: any) {
+        say(runId, `I couldn't write to the clipboard on this machine. The real error: ${String(err?.message || err).slice(0, 300)}`);
       }
       return;
     }

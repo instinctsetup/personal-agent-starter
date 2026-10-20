@@ -5,6 +5,43 @@ import os from "node:os";
 import { statfsSync } from "node:fs";
 import { execFile } from "node:child_process";
 
+/** PowerShell executables to try, most robust first. The absolute System32 path is
+ *  immune to a broken PATH in the daemon's environment - the class of bug behind a
+ *  6ms "spawn ENOENT" clipboard failure on a healthy Windows 11 laptop. */
+export function powershellCandidatesFor(platform: string, systemRoot: string): string[] {
+  if (platform !== "win32") return ["powershell"];
+  return [
+    `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+    "powershell.exe",
+    "powershell",
+    "pwsh",
+  ];
+}
+export function powershellCandidates(): string[] {
+  return powershellCandidatesFor(process.platform, process.env.SystemRoot || "C:\\Windows");
+}
+
+/** True only for "the exe never launched" - a nonzero script exit must NOT retry other shells. */
+function isSpawnFailure(err: unknown): boolean {
+  return /ENOENT|spawn .* (not found|ENOENT)/i.test(String((err as any)?.message || err));
+}
+
+/** Run a PowerShell -Command script against the first candidate that launches.
+ *  The thrown error names EVERY attempt so chat can show the real reason. */
+export async function runPs(script: string, input?: string, timeoutMs = 8000,
+  _run: typeof run = run, _candidates: string[] = powershellCandidates()): Promise<string> {
+  const errs: string[] = [];
+  for (const exe of _candidates) {
+    try {
+      return await _run(exe, ["-NoProfile", "-Command", script], input, timeoutMs);
+    } catch (e) {
+      errs.push(`${exe}: ${(e as any)?.message || e}`);
+      if (!isSpawnFailure(e)) break;
+    }
+  }
+  throw new Error(errs.join(" | ") || "no PowerShell executable found");
+}
+
 function run(cmd: string, args: string[], input?: string, timeoutMs = 8000): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(cmd, args, { timeout: timeoutMs, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout, stderr) => {
@@ -26,12 +63,11 @@ function fmtBytes(n: number): string {
 async function batteryLine(): Promise<string | null> {
   if (process.platform !== "win32") return null;
   try {
-    const out = await run("powershell", ["-NoProfile", "-Command",
-      "(Get-CimInstance Win32_Battery | Measure-Object -Property EstimatedChargeRemaining -Average).Average"]);
+    const out = await runPs(
+      "(Get-CimInstance Win32_Battery | Measure-Object -Property EstimatedChargeRemaining -Average).Average");
     const pct = Math.round(Number(out.trim()));
     if (!Number.isFinite(pct)) return null;
-    const status = await run("powershell", ["-NoProfile", "-Command",
-      "(Get-CimInstance Win32_Battery).BatteryStatus"]);
+    const status = await runPs("(Get-CimInstance Win32_Battery).BatteryStatus");
     const charging = status.trim() === "2";
     return `Battery: ${pct}%${charging ? " (charging)" : ""}`;
   } catch {
@@ -62,7 +98,7 @@ export async function systemInfo(): Promise<string> {
 /** Read the text clipboard. Empty string when the clipboard holds no text. */
 export async function clipboardRead(): Promise<string> {
   if (process.platform === "win32") {
-    const out = await run("powershell", ["-NoProfile", "-Command", "Get-Clipboard"]);
+    const out = await runPs("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard");
     return out.replace(/\r?\n$/, "");
   }
   if (process.platform === "darwin") return run("pbpaste", []);
@@ -72,8 +108,20 @@ export async function clipboardRead(): Promise<string> {
 /** Copy text to the clipboard. Non-destructive; the write is traced like any tool call. */
 export async function clipboardWrite(text: string): Promise<void> {
   if (process.platform === "win32") {
-    await run("powershell", ["-NoProfile", "-Command", "$input | Set-Clipboard"], text);
-    return;
+    // "$input | Set-Clipboard" is unreliable in -Command mode (stdin enumeration) and mangles
+    // non-ASCII through the console codepage - read the console stream explicitly as UTF-8.
+    try {
+      await runPs("[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())", text);
+      return;
+    } catch (psErr) {
+      // last resort: clip.exe reads stdin too (System32 absolute first; ASCII-safe only)
+      const root = process.env.SystemRoot || "C:\\Windows";
+      const clipErrs: string[] = [`PowerShell: ${(psErr as any)?.message || psErr}`];
+      for (const exe of [`${root}\\System32\\clip.exe`, "clip.exe", "clip"]) {
+        try { await run(exe, [], text); return; } catch (e) { clipErrs.push(`${exe}: ${(e as any)?.message || e}`); }
+      }
+      throw new Error(clipErrs.join(" | "));
+    }
   }
   if (process.platform === "darwin") {
     await run("pbcopy", [], text);
@@ -115,7 +163,13 @@ export async function launchApp(name: string, fileArg?: string): Promise<string>
     // `start` returns immediately and resolves apps from PATH/App Paths registry keys.
     const args = ["/c", "start", "", spec.win32];
     if (fileArg) args.push(fileArg);
-    await run("cmd", args, undefined, 5000);
+    const root = process.env.SystemRoot || "C:\\Windows";
+    const errs: string[] = [];
+    for (const exe of [process.env.ComSpec || "", `${root}\\System32\\cmd.exe`, "cmd.exe", "cmd"].filter(Boolean)) {
+      try { await run(exe, args, undefined, 5000); return spec.label; }
+      catch (e) { errs.push(`${exe}: ${(e as any)?.message || e}`); if (!isSpawnFailure(e)) break; }
+    }
+    throw new Error(errs.join(" | ") || "no cmd.exe found");
   } else if (plat === "darwin" && spec.darwin) {
     await run("open", ["-a", spec.darwin, ...(fileArg ? [fileArg] : [])], undefined, 5000);
   } else if (spec.linux) {
