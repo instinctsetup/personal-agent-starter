@@ -208,6 +208,28 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
   return all;
 }
 
+/** Privacy routing (Tier 3.5): chat turns carry his memories, drafts and mail context -
+ *  when a local Ollama model is set up, those go to HIS GPU first and only fall back to
+ *  the free cloud race when the local model is down or too slow. The router already
+ *  prefers local_router_model; this covers the reply itself and memory extraction. */
+export async function chatWithPrivacy(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+  if (localEnabled()) {
+    const chatModel = getSetting("local_chat_model");
+    if (chatModel) {
+      const span = startSpan(runId, "model.local", null, { model: chatModel, privacy: "local-first" });
+      try {
+        const text = await ollamaChat(chatModel, messages as { role: string; content: string }[], 60_000);
+        if (text?.trim()) { endSpan(span, "ok"); return text; }
+        endSpan(span, "error", { error: "empty reply" });
+      } catch (e: any) {
+        endSpan(span, "error", { error: String(e?.message || e).slice(0, 200) });
+        /* local model down/slow - the cloud race takes it */
+      }
+    }
+  }
+  return modelRace(runId, messages, opts);
+}
+
 /**
  * Race the free models: fire the prompt at all of them in parallel, take the
  * first good answer, abort the slower calls, and say which model won. If every
@@ -496,7 +518,7 @@ function extractMemories(runId: string, userText: string, agentReply: string) {
     { role: "system" as const, content: 'You extract durable user facts and preferences from a chat exchange. Reply with a strict JSON array (possibly empty) of {"kind":"fact"|"preference","text":"..."}. Keep only things worth remembering next week: name, city, college, skills, preferences, constraints, recurring context. Never secrets, never one-off requests, never guesses. JSON array only.' },
     { role: "user" as const, content: `User said: """${userText.slice(0, 500)}"""\nAssistant replied: """${agentReply.slice(0, 500)}"""` },
   ];
-  modelRace(runId, msgs, { maxTokens: 300 }, true, 1) // 1 racer: background memory extraction must not burn the free-tier daily quota on a 4-way race
+  chatWithPrivacy(runId, msgs, { maxTokens: 300 }) // local-first: extracted facts are his most private data
     .then((raw) => {
       const m = raw.match(/\[[\s\S]*\]/);
       if (!m) return;
@@ -779,7 +801,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         ].filter(Boolean).join("\n");
         const sys = [cap, mem, rules].filter(Boolean).join("\n\n");
         const chatMsgs = [{ role: "system" as const, content: sys }, { role: "user" as const, content: t }];
-        const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
+        const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => chatWithPrivacy(runId, chatMsgs)));
         const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
         say(runId, out);
         extractMemories(runId, t, out);
