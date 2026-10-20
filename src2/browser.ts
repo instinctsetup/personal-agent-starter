@@ -1,5 +1,5 @@
 /** Live browser engine: one persistent Playwright context the daemon drives and the UI watches. */
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { chromium, type BrowserContext, type Page, type CDPSession } from "playwright";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { DATA_DIR } from "./db.js";
@@ -79,6 +79,62 @@ export async function detectChallenge(): Promise<string | null> {
 }
 
 export async function closeBrowser(): Promise<void> {
+  stopScreencast();
   await context?.close().catch(() => {});
   context = null; page = null;
+}
+
+// ---- CDP screencast: push live frames instead of polling screenshots ---------
+let cdp: CDPSession | null = null;
+let castQuality = 60;
+let slowStreak = 0;
+export const castStats = { frames: 0, startedAt: 0, quality: 60 };
+
+export function isScreencasting(): boolean {
+  return cdp !== null;
+}
+
+/** Consumer tells us it is dropping frames; lower quality to catch up. */
+export function noteSlowConsumer(): void {
+  if (!cdp || castQuality <= 25) return;
+  if (++slowStreak < 3) return;
+  slowStreak = 0;
+  castQuality = Math.max(25, castQuality - 15);
+  castStats.quality = castQuality;
+  cdp.send("Page.startScreencast", { format: "jpeg", quality: castQuality, everyNthFrame: 1 }).catch(() => {});
+}
+
+/**
+ * Stream JPEG frames of the current page. Backpressure is the CDP contract:
+ * Chrome waits for screencastFrameAck before sending the next frame, so we ack
+ * only after the consumer has handled the frame - the stream self-paces.
+ */
+export async function startScreencast(onFrame: (jpeg: Buffer) => void | Promise<void>): Promise<void> {
+  const p = await ensureBrowser();
+  stopScreencast();
+  cdp = await p.context().newCDPSession(p);
+  castQuality = 60;
+  slowStreak = 0;
+  castStats.frames = 0;
+  castStats.startedAt = Date.now();
+  castStats.quality = castQuality;
+  const session = cdp;
+  session.on("Page.screencastFrame", async (ev: { data: string; sessionId: number }) => {
+    if (cdp !== session) return;
+    try {
+      castStats.frames++;
+      await onFrame(Buffer.from(ev.data, "base64"));
+    } catch { /* consumer errors must not stall the stream */ }
+    session.send("Page.screencastFrameAck", { sessionId: ev.sessionId }).catch(() => {});
+  });
+  await session.send("Page.startScreencast", { format: "jpeg", quality: castQuality, everyNthFrame: 1 });
+}
+
+export function stopScreencast(): void {
+  const session = cdp;
+  cdp = null;
+  if (session) {
+    session.send("Page.stopScreencast").catch(() => {});
+    session.detach().catch(() => {});
+  }
 }

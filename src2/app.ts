@@ -22,6 +22,28 @@ export async function buildApp() {
   const app = Fastify({ logger: false });
   registerAuth(app);
   await app.register(fastifyWebsocket);
+  const br = await import("./browser.js");
+
+  // screencast subscribers + lazy cast lifecycle (streams only while someone watches)
+  const castSubs = new Set<WebSocket>();
+  let castStarting: Promise<void> | null = null;
+  const ensureCast = () => {
+    if (br.isScreencasting()) return Promise.resolve();
+    if (castStarting) return castStarting;
+    castStarting = br.startScreencast((buf) => {
+      for (const ws of castSubs) {
+        try {
+          if ((ws as any).bufferedAmount > 512 * 1024) { br.noteSlowConsumer(); continue; } // drop frames for a slow client
+          ws.send(buf);
+        } catch { /* dropped */ }
+      }
+    }).finally(() => { castStarting = null; });
+    return castStarting;
+  };
+  const dropCastSub = (ws: WebSocket) => {
+    castSubs.delete(ws);
+    if (castSubs.size === 0) br.stopScreencast();
+  };
 
   const clients = new Set<WebSocket>();
   onEvent((e) => {
@@ -33,7 +55,20 @@ export async function buildApp() {
 
   app.get("/ws", { websocket: true }, (socket) => {
     clients.add(socket);
-    socket.on("close", () => clients.delete(socket));
+    socket.on("close", () => { clients.delete(socket); dropCastSub(socket); });
+    socket.on("message", async (raw: Buffer | string) => {
+      let msg: any;
+      try { msg = JSON.parse(String(raw)); } catch { return; }
+      try {
+        if (msg?.type === "screencast") {
+          if (msg.on) { castSubs.add(socket); await ensureCast(); }
+          else dropCastSub(socket);
+        } else if (msg?.type === "click") await br.clickAt(Number(msg.x), Number(msg.y));
+        else if (msg?.type === "type") await br.typeText(String(msg.text ?? ""));
+        else if (msg?.type === "key") await br.pressKey(String(msg.key ?? "Enter"));
+        else if (msg?.type === "navigate" && msg.url) await br.navigate(String(msg.url));
+      } catch { /* a bad input message must not kill the socket */ }
+    });
   });
 
   app.post("/api/chat", async (req) => {
@@ -119,7 +154,6 @@ export async function buildApp() {
 
 
   // --- live browser ---
-  const br = await import("./browser.js");
   app.post("/api/browser/navigate", async (req) => {
     const { url } = req.body as { url: string };
     const final = await br.navigate(url);

@@ -467,9 +467,62 @@ function BrowserTab() {
   const typeRef = useRef<HTMLInputElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
 
-  // live view: refresh the <img> pixels directly - never re-render the tab, so the
-  // URL box, the type box, and any half-typed text survive every refresh tick.
-  // double-buffer: preload the next frame, swap only once it has fully loaded - no blank frame, no flicker
+  // live view, two modes:
+  //  - screencast: CDP pushes JPEG frames over a dedicated websocket into a <canvas>
+  //    (10-15 fps, self-pacing acks; no React re-render per frame, focus/text survive)
+  //  - fallback: if no frame arrives within 3s, poll screenshots into the <img> via ref
+  //    (double-buffered, still no re-render)
+  const castWsRef = useRef<WebSocket | null>(null);
+  const framesRef = useRef(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [useFallback, setUseFallback] = useState(false);
+  const [ripples, setRipples] = useState<{ id: number; x: number; y: number }[]>([]);
+
+  useEffect(() => {
+    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+    ws.binaryType = "blob";
+    castWsRef.current = ws;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "screencast", on: true }));
+      // initial paint: screencast only emits on page change, so grab one snapshot for a page that is already open
+      fetch("/api/browser/screenshot").then(r => r.ok ? r.blob() : null).then(b => { if (b && b.size > 100) void draw(b); }).catch(() => {});
+    };
+    const draw = async (blob: Blob) => {
+      try {
+        const bmp = await createImageBitmap(blob);
+        const ctx = canvasRef.current?.getContext("2d");
+        if (ctx) { ctx.drawImage(bmp, 0, 0); setStarted(true); }
+        bmp.close();
+      } catch { /* a bad frame is skipped, the next one is coming */ }
+    };
+    ws.onmessage = (ev) => {
+      if (typeof ev.data === "string") return; // JSON events belong to the main socket
+      framesRef.current++;
+      void draw(ev.data as Blob);
+    };
+    const giveUpTimer = setTimeout(() => { if (framesRef.current === 0) setUseFallback(true); }, 3000);
+    const onVis = () => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "screencast", on: !document.hidden }));
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      clearTimeout(giveUpTimer);
+      document.removeEventListener("visibilitychange", onVis);
+      try { ws.send(JSON.stringify({ type: "screencast", on: false })); } catch { /* closing */ }
+      ws.close();
+      castWsRef.current = null;
+    };
+  }, []);
+
+  const castSend = (msg: Record<string, unknown>) => {
+    const ws = castWsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN && !useFallback) ws.send(JSON.stringify(msg));
+    else if (msg.type === "click") fetch("/api/browser/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x: msg.x, y: msg.y }) });
+    else if (msg.type === "type") fetch("/api/browser/type", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: msg.text }) });
+    else if (msg.type === "key") fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: msg.key }) });
+  };
+
+  // fallback path (no screencast): preload the next frame, swap only once it has fully loaded
   const refreshShot = () => {
     const next = new Image();
     next.onload = () => { if (imgRef.current) imgRef.current.src = next.src; };
@@ -479,7 +532,7 @@ function BrowserTab() {
   useEffect(() => {
     if (!live) return;
     const id = setInterval(async () => {
-      refreshShot();
+      if (useFallback) refreshShot();
       const st = await fetch("/api/browser/state").then(r => r.json()).catch(() => null);
       if (st) {
         setCurrent(st.url);
@@ -489,7 +542,7 @@ function BrowserTab() {
       }
     }, 1200);
     return () => clearInterval(id);
-  }, [live]);
+  }, [live, useFallback]);
 
   const nav = async () => {
     if (!url.trim()) return;
@@ -498,13 +551,16 @@ function BrowserTab() {
     setBusy(false); setStarted(true); setTimeout(refreshShot, 300);
   };
 
-  const clickImg = async (e: React.MouseEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    const rect = img.getBoundingClientRect();
+  const clickView = (e: React.MouseEvent<HTMLElement>) => {
+    const el = e.currentTarget;
+    const rect = el.getBoundingClientRect();
     const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
     const y = Math.round((e.clientY - rect.top) * (800 / rect.height));
-    await fetch("/api/browser/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x, y }) });
-    setTimeout(refreshShot, 400);
+    const id = Date.now() + Math.random();
+    setRipples(rs => [...rs, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
+    setTimeout(() => setRipples(rs => rs.filter(r => r.id !== id)), 500);
+    castSend({ type: "click", x, y });
+    if (useFallback) setTimeout(refreshShot, 400);
   };
 
   return (
@@ -526,24 +582,34 @@ function BrowserTab() {
         </div>
       )}
       <div className="flex-1 overflow-auto bg-black/40 flex items-start justify-center p-3">
-        {started || current ? (
-          <img ref={imgRef} src="/api/browser/screenshot" onClick={clickImg}
-            className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" alt="live browser" draggable={false} />
-        ) : (
-          <div className="text-slate-500 text-sm mt-20 text-center">
-            Nothing open yet. Enter a URL above, or say <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">open google.com</code> in chat.
-          </div>
-        )}
+        <div className="relative max-w-full">
+          {useFallback ? (
+            <img ref={imgRef} src="/api/browser/screenshot" onClick={clickView}
+              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" alt="live browser" draggable={false} />
+          ) : (
+            <canvas ref={canvasRef} width={1280} height={800} onClick={clickView}
+              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" />
+          )}
+          {ripples.map(r => (
+            <span key={r.id} className="absolute pointer-events-none rounded-full border-2 border-sky-400"
+              style={{ left: r.x - 12, top: r.y - 12, width: 24, height: 24, animation: "pa-ripple 0.5s ease-out forwards" }} />
+          ))}
+          {!started && !current && (
+            <div className="absolute inset-0 flex items-center justify-center text-slate-500 text-sm text-center bg-[#0a0e14] rounded-lg pointer-events-none">
+              <div>Nothing open yet. Enter a URL above, or say <code className="bg-slate-800 px-1.5 py-0.5 rounded text-sky-300 text-xs">open google.com</code> in chat.</div>
+            </div>
+          )}
+        </div>
       </div>
       <div className="p-2 border-t border-slate-800 flex gap-2 items-center text-xs text-slate-400">
         <span className="truncate flex-1">{current || "no page"}</span>
         <input ref={typeRef} placeholder="Type into page…" onKeyDown={async e => {
           if (e.key === "Enter" && typeRef.current?.value) {
-            await fetch("/api/browser/type", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: typeRef.current.value }) });
-            typeRef.current.value = ""; setTimeout(refreshShot, 300);
+            castSend({ type: "type", text: typeRef.current.value });
+            typeRef.current.value = ""; if (useFallback) setTimeout(refreshShot, 300);
           }
         }} className="w-64 bg-[#161b22] border border-slate-700 rounded px-2 py-1 outline-none focus:border-sky-500" />
-        <button onClick={async () => { await fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "Enter" }) }); setTimeout(refreshShot, 300); }}
+        <button onClick={async () => { await fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "Enter" }) }); if (useFallback) setTimeout(refreshShot, 300); }}
           className="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Enter</button>
       </div>
     </div>
@@ -624,6 +690,14 @@ function PlaceholderTab({ name }: { name: string }) {
       <div className="text-slate-500 text-sm">This module is being wired up in the v2.0 build.</div>
     </div>
   );
+}
+
+/* ripple animation for browser clicks */
+if (typeof document !== "undefined" && !document.getElementById("pa-ripple-style")) {
+  const st = document.createElement("style");
+  st.id = "pa-ripple-style";
+  st.textContent = "@keyframes pa-ripple { from { transform: scale(0.4); opacity: 1; } to { transform: scale(2.2); opacity: 0; } }";
+  document.head.appendChild(st);
 }
 
 /* ================= LOGIN ================= */
