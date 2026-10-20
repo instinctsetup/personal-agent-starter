@@ -306,7 +306,7 @@ function JobsTab() {
     await fetch(`/api/tracker/${id}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ status }) });
     load();
   };
-  const statuses = ["Applied", "Cold Mailed", "Replied", "Rejected", "Scam Flagged"];
+  const statuses = ["Scouted", "Applied", "Cold Mailed", "Replied", "Rejected", "Scam Flagged"];
   return (
     <div className="p-6 overflow-y-auto h-full">
       <div className="flex items-center justify-between mb-4">

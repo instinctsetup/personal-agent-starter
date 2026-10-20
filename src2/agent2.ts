@@ -152,12 +152,60 @@ export function normalizeCommand(t: string): string {
 /** One pending "the form needs these facts" question set from the applier; the next chat message answers it. */
 let pendingFacts: { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout> } | null = null;
 
+/** A hunt shortlist: the next "apply to 1,3" / "apply all" picks from it (15 min expiry). */
+let pendingHunt: { results: import("./search.js").SearchResult[]; expires: number } | null = null;
+
+
+/** The apply flow for one posting: fill profile facts, ask missing ones in chat, approval card before submit. */
+async function runApplyFlow(runId: string, url: string): Promise<void> {
+  say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
+  const result = await toolCall(runId, "jobs.apply", { url }, async () => {
+    const { runJobApplication } = await import("../src/tools/apply.js");
+    const { ProfileStore } = await import("../src/tools/profile.js");
+    const profile = new ProfileStore(DATA_DIR).get();
+    return runJobApplication({ url, profile, headless: true, dataDir: DATA_DIR }, {
+      askFacts: async (qs: string[]) => {
+        if (pendingFacts) return {}; // another apply is already asking - do not stack questions
+        say(runId, [
+          `The form needs ${qs.length} fact(s) I don't have:`,
+          ...qs.map((q, i) => `${i + 1}. ${q}`),
+          "",
+          "Reply with the answers (one per line, same order), or `skip` to leave them empty. I never invent facts for you.",
+        ].join("\n"));
+        const answers = await new Promise<Record<string, string> | null>((resolve) => {
+          const timer = setTimeout(() => {
+            if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
+          }, 10 * 60 * 1000);
+          pendingFacts = { questions: qs, resolve, timer };
+        });
+        if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
+        return answers ?? {};
+      },
+      confirmSubmit: async (summary: string) => {
+        const card = requestApproval("submit_application", summary, { url }, runId);
+        say(runId, "Review the application summary above - Approve submits, Reject cancels.", { approval_id: card.id });
+        const res = await waitApproval(card.id);
+        return res.status === "approved";
+      },
+    });
+  });
+  if (result.status === "submitted") {
+    addApplication({ company: new URL(url).hostname, role: "", portal: new URL(url).hostname, url, status: "Applied" });
+    say(runId, `Submitted. Filled ${result.filled.length} field(s). Tracked in Jobs & Tracker.`);
+  } else {
+    say(runId, `Not submitted (${result.status}). ${result.missing.length ? `Missing facts: ${result.missing.join(", ")}. Update with \`connect profile\`.` : result.summary || ""}`);
+  }
+}
+
 export async function handleUserMessage(text: string): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
   const cmd = normalizeCommand(t);
   const lower = cmd.toLowerCase();
+
+  /** A hunt shortlist waiting for the user's picks. */
+  // (declared below; selection handled before command routing)
 
   // an apply flow is waiting for missing facts - this message is the answer, not a new command
   if (pendingFacts) {
@@ -179,12 +227,37 @@ export async function handleUserMessage(text: string): Promise<void> {
     return;
   }
 
+  // a hunt shortlist is open - "apply to 1,3" / "apply all" picks from it
+  if (pendingHunt) {
+    if (Date.now() > pendingHunt.expires) {
+      pendingHunt = null;
+    } else {
+      const sel = cmd.match(/^(?:apply(?:\s+to)?\s+)?(all|\d+(?:\s*[, ]\s*\d+)*)$/i);
+      if (sel) {
+        const results = pendingHunt.results;
+        pendingHunt = null;
+        const picks = sel[1].toLowerCase() === "all"
+          ? results
+          : [...new Set(sel[1].split(/[\s,]+/).filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= results.length).map((n) => results[n - 1]);
+        if (!picks.length) {
+          say(runId, "None of those numbers are on the shortlist. Run the hunt again and pick from the list.");
+          return;
+        }
+        say(runId, `Applying to ${picks.length} posting(s), one at a time. Each still needs your approval before anything is submitted.`);
+        for (const r of picks) await runApplyFlow(runId, r.url);
+        return;
+      }
+      // not a selection: keep the shortlist open and route normally
+    }
+  }
+
   try {
     if (lower === "help" || lower === "commands") {
       say(runId, [
         "What I understand (plain English works - \"can u apply to <url>\" is fine):",
         "- connect <gemini|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
+        "- hunt <query> - job hunt: shortlist -> \"apply to 1,3\" / \"apply all\" (tracked as Scouted)",
         "- open / browse <url> - drive the live browser (Browser tab)",
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
         "- apply to <job-url> - fill profile facts only, approval before submit",
@@ -215,6 +288,31 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, rows.length
         ? "Vault entries (secrets stay encrypted):\n" + rows.map((r) => `- ${r.service}: ${r.username}`).join("\n")
         : "Vault is empty. Say `connect <service>` to add credentials.");
+      return;
+    }
+
+    // ---- job hunt: search -> shortlist -> apply picks -> tracker --------------
+    const mHunt = cmd.match(/^(?:hunt|job hunt)\s+(.+)$/i)
+      || cmd.match(/^(?:find|look for|search for)\s+(.+\b(?:jobs?|internships?|openings|roles)\b.*)$/i);
+    if (mHunt) {
+      const q = mHunt[1].replace(/^me\s+/i, "").trim();
+      const results = await toolCall(runId, "jobs.hunt", { query: q }, () => webSearch(q));
+      if (!results.length) {
+        say(runId, `No results for "${q}". Try a different query.`);
+        return;
+      }
+      const host = (u: string) => { try { return new URL(u).hostname; } catch { return u; } };
+      const tracked = new Set(listApplications().map((a) => a.url).filter(Boolean));
+      for (const r of results) {
+        if (!tracked.has(r.url)) addApplication({ company: host(r.url), role: r.title.slice(0, 80), portal: host(r.url), url: r.url, status: "Scouted" });
+      }
+      pendingHunt = { results, expires: Date.now() + 15 * 60_000 };
+      say(runId, [
+        `Top ${results.length} hits for "${q}":`,
+        ...results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${tracked.has(r.url) ? " (already tracked)" : ""}\n   ${r.snippet}`),
+        "",
+        "Reply `apply to 1` (or `apply to 1,3`, `apply all`) within 15 min and I'll fill those forms. New ones sit on the Jobs tab as Scouted.",
+      ].join("\n"), { results });
       return;
     }
 
@@ -368,44 +466,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     // ---- universal job applier ------------------------------------------
     const mApply = cmd.match(/^apply (?:to|for)(?: this job| this one| here)? (\S+)$/i);
     if (mApply) {
-      const url = mApply[1];
-      say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
-      const result = await toolCall(runId, "jobs.apply", { url }, async () => {
-        const { runJobApplication } = await import("../src/tools/apply.js");
-        const { ProfileStore } = await import("../src/tools/profile.js");
-        const profile = new ProfileStore(DATA_DIR).get();
-        return runJobApplication({ url, profile, headless: true, dataDir: DATA_DIR }, {
-          askFacts: async (qs: string[]) => {
-            if (pendingFacts) return {}; // another apply is already asking - do not stack questions
-            say(runId, [
-              `The form needs ${qs.length} fact(s) I don't have:`,
-              ...qs.map((q, i) => `${i + 1}. ${q}`),
-              "",
-              "Reply with the answers (one per line, same order), or `skip` to leave them empty. I never invent facts for you.",
-            ].join("\n"));
-            const answers = await new Promise<Record<string, string> | null>((resolve) => {
-              const timer = setTimeout(() => {
-                if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
-              }, 10 * 60 * 1000);
-              pendingFacts = { questions: qs, resolve, timer };
-            });
-            if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
-            return answers ?? {};
-          },
-          confirmSubmit: async (summary: string) => {
-            const card = requestApproval("submit_application", summary, { url }, runId);
-            say(runId, "Review the application summary above - Approve submits, Reject cancels.", { approval_id: card.id });
-            const res = await waitApproval(card.id);
-            return res.status === "approved";
-          },
-        });
-      });
-      if (result.status === "submitted") {
-        addApplication({ company: new URL(url).hostname, role: "", portal: new URL(url).hostname, url, status: "Applied" });
-        say(runId, `Submitted. Filled ${result.filled.length} field(s). Tracked in Jobs & Tracker.`);
-      } else {
-        say(runId, `Not submitted (${result.status}). ${result.missing.length ? `Missing facts: ${result.missing.join(", ")}. Update with \`connect profile\`.` : result.summary || ""}`);
-      }
+      await runApplyFlow(runId, mApply[1]);
       return;
     }
 
