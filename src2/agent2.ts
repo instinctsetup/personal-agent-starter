@@ -18,6 +18,7 @@ import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 import { routeWithModel } from "./router.js";
+import { resolveModel, currentModel, PROVIDERS, type ProviderId } from "./models.js";
 
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier (verified against ai.google.dev/gemini-api/docs/pricing, Oct 2026)
 export const FALLBACK_GEMINI_MODEL = "gemini-2.5-flash"; // stable free-tier fallback if the default is not found
@@ -151,29 +152,29 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
   const groqKey = getSetting("groq_api_key");
   if (groqKey) {
     racers.push({
-      label: "groq/llama-3.3-70b",
-      run: (signal) => new OpenAiCompatibleProvider(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", groqKey, signal).chat(messages, opts),
+      label: `groq/${currentModel("groq")}`,
+      run: (signal) => new OpenAiCompatibleProvider(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1", currentModel("groq"), groqKey, signal).chat(messages, opts),
     });
   }
   const orKey = getSetting("openrouter_api_key");
   if (orKey) {
     racers.push({
-      label: "openrouter/llama-3.3-70b:free",
-      run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", orKey, signal).chat(messages, opts),
+      label: `openrouter/${currentModel("openrouter")}`,
+      run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", currentModel("openrouter"), orKey, signal).chat(messages, opts),
     });
   }
   const cbKey = getSetting("cerebras_api_key");
   if (cbKey) {
     racers.push({
-      label: "cerebras/llama-3.3-70b",
-      run: (signal) => new OpenAiCompatibleProvider(process.env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1", "llama-3.3-70b", cbKey, signal).chat(messages, opts),
+      label: `cerebras/${currentModel("cerebras")}`,
+      run: (signal) => new OpenAiCompatibleProvider(process.env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1", currentModel("cerebras"), cbKey, signal).chat(messages, opts),
     });
   }
   const ghKey = getSetting("github_models_key");
   if (ghKey) {
     racers.push({
-      label: "github-models/gpt-4o-mini",
-      run: (signal) => new OpenAiCompatibleProvider(process.env.GITHUB_MODELS_BASE_URL || "https://models.github.ai/inference", "openai/gpt-4o-mini", ghKey, signal).chat(messages, opts),
+      label: `github-models/${currentModel("github-models")}`,
+      run: (signal) => new OpenAiCompatibleProvider(process.env.GITHUB_MODELS_BASE_URL || "https://models.github.ai/inference", currentModel("github-models"), ghKey, signal).chat(messages, opts),
     });
   }
   if (localEnabled()) {
@@ -1289,16 +1290,13 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
     say(runId, `Profile saved (${Object.keys(patch).length} fields). The job applier fills only these facts.`);
     return "ok";
   }
-  // optional race keys: validate with a tiny ping, then they join every model race
-  if (service === "groq" || service === "openrouter") {
+  // optional race keys: resolve the model from the provider's live list, verify it, then it joins every race
+  const raceService: Record<string, ProviderId> = { groq: "groq", openrouter: "openrouter", cerebras: "cerebras", "github models": "github-models", "github-models": "github-models" };
+  if (raceService[service]) {
+    const pid = raceService[service];
     try {
-      const key = getSetting(`${service}_api_key`) || "";
-      if (!key) throw new Error("no key was stored - paste it into the card");
-      const p = service === "groq"
-        ? new OpenAiCompatibleProvider(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", key)
-        : new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", key);
-      await p.chat([{ role: "user", content: "ping" }], { maxTokens: 4 });
-      say(runId, `${service === "groq" ? "Groq" : "OpenRouter"} key works - it now joins every model race alongside your Gemini models.`);
+      const r = await resolveModel(pid);
+      say(runId, `${PROVIDERS[pid].label} connected - using ${r.model} (${r.source === "live" ? "picked from your account's live model list" : "from the verified fallback list"}). It now joins every model race.`);
       return "ok";
     } catch (err: any) {
       say(runId, `Saved, but validation failed: ${err?.message || err}. The key stays stored - fix it any time with \`connect ${service}\`.`);
@@ -1320,11 +1318,10 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
           await validateGeminiConnection(model, key);
           say(runId, `Model connection OK (${model}).`);
         } catch (err: any) {
-          // unknown model id -> fall back to a known-valid free model once
-          if (err?.code === "model_not_found" && model !== FALLBACK_GEMINI_MODEL) {
-            await validateGeminiConnection(FALLBACK_GEMINI_MODEL, key);
-            setSetting("model", FALLBACK_GEMINI_MODEL);
-            say(runId, `"${model}" was not found on the Gemini API, so you were switched to ${FALLBACK_GEMINI_MODEL} (free tier). Connection OK.`);
+          // unknown model id -> resolve the best available model from the account's live list
+          if (err?.code === "model_not_found") {
+            const r = await resolveModel("gemini", key);
+            say(runId, `"${model}" was not found on the Gemini API, so you were switched to ${r.model} (picked from your account's live model list). Connection OK.`);
           } else {
             throw err;
           }

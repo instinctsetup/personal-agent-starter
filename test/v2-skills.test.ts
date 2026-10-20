@@ -79,6 +79,7 @@ test("race: cerebras + github-models keys each add a racer with the right endpoi
   setSetting("cerebras_api_key", "cb-test");
   setSetting("github_models_key", "ghp-test");
   const after = buildRacers([{ role: "user", content: "hi" }]).map((r) => r.label);
+  // labels carry the resolved model id (preferences[0] until connect resolves live)
   assert.ok(after.includes("cerebras/llama-3.3-70b"));
-  assert.ok(after.includes("github-models/gpt-4o-mini"));
+  assert.ok(after.includes("github-models/openai/gpt-4o-mini"));
 });

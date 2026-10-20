@@ -90,7 +90,7 @@ test("race: groq key joins the race and wins when gemini is down", async () => {
   const out = await modelRace("run-test", [{ role: "user", content: "hi" }]);
   off();
   assert.equal(out, "groq answer");
-  assert.match(notes[0], /groq\/llama-3\.3-70b answered first/);
+  assert.match(notes[0], /groq\/llama-3\.3-70b-versatile answered first/); // label = resolved model id (preferences[0] until connect resolves live)
   delete process.env.GROQ_BASE_URL;
   g.close(); g2.close(); groq.close(); setSetting("groq_api_key", "");
 });
