@@ -18,6 +18,7 @@ import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
 import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 import { routeWithModel } from "./router.js";
+import { systemInfo, clipboardRead, clipboardWrite, launchApp, isKnownApp } from "./winops.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -679,6 +680,9 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- linkedin / linkedin on / linkedin feed - LinkedIn assist (risk-gated)",
         "- linkedin message <profile-url>: <text> / connect with <profile-url> on linkedin - approval-gated, daily-capped",
         "- vault - list stored credentials (secrets never shown)",
+        "- laptop status - battery, RAM, disk free, CPU at a glance",
+        "- what's on my clipboard / copy <text> - read or set the clipboard",
+        "- open <app> - launch an allow-listed app (chrome, vscode, notepad, calculator, explorer, spotify); open <url> still browses",
       ].join("\n"));
       return;
     }
@@ -1339,9 +1343,58 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       return;
     }
 
+    // ---- local machine: system info, clipboard, allow-listed app launcher ----
+    if (/^(?:system info|sys ?info|laptop status|how'?s my (?:laptop|pc|computer)(?: doing)?|how is my (?:laptop|pc|computer)(?: doing)?)$/i.test(cmd)) {
+      const info = await toolCall(runId, "system.info", {}, () => systemInfo());
+      say(runId, info);
+      return;
+    }
+
+    if (/^(?:what'?s|whats) on my clipboard\??$/i.test(cmd) || /^clipboard$/i.test(cmd)) {
+      try {
+        const clip = await toolCall(runId, "clipboard.read", {}, () => clipboardRead());
+        say(runId, clip.trim() ? `On your clipboard:\n\n${clip}` : "Your clipboard is empty (or holds something that isn't text).");
+      } catch {
+        say(runId, "I couldn't read the clipboard on this machine.");
+      }
+      return;
+    }
+
+    const mCopy = cmd.match(/^copy ([\s\S]+)$/i);
+    if (mCopy) {
+      try {
+        await toolCall(runId, "clipboard.write", { length: mCopy[1].length }, () => clipboardWrite(mCopy[1]));
+        say(runId, `Copied ${mCopy[1].length} character(s) to your clipboard.`);
+      } catch {
+        say(runId, "I couldn't write to the clipboard on this machine.");
+      }
+      return;
+    }
+
+    const mLaunch = cmd.match(/^launch\s+(\w+)$/i);
+    if (mLaunch) {
+      try {
+        const label = await toolCall(runId, "app.launch", { app: mLaunch[1] }, () => launchApp(mLaunch[1]));
+        say(runId, `Opening ${label}.`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't open that app.");
+      }
+      return;
+    }
+
     // ---- email send with approval ------------------------------------------
     const mOpen = cmd.match(/^(?:open|browse|go to)\s+(\S+)$/i);
     if (mOpen) {
+      // "open chrome" / "open notepad" means the local app; "open <url>" still browses.
+      if (isKnownApp(mOpen[1]) && !/\.|\//.test(mOpen[1])) {
+        try {
+          const label = await toolCall(runId, "app.launch", { app: mOpen[1] }, () => launchApp(mOpen[1]));
+          say(runId, `Opening ${label}.`);
+        } catch (err: any) {
+          say(runId, err?.message || "Couldn't open that app.");
+        }
+        return;
+      }
       const url = await toolCall(runId, "browser.navigate", { url: mOpen[1] }, async () => {
         const br = await import("./browser.js");
         return br.navigate(mOpen[1]);
