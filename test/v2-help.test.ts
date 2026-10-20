@@ -21,7 +21,7 @@ test("help mentions every command family", async () => {
   const families = [
     "connect", "gemini-web", "search", "hunt", "open", "sign up", "signups",
     "apply to", "track", "applications", "board", "plan", "caps", "remember",
-    "memories", "forget", "local", "skills", "traces", "trace", "send mail",
+    "memories", "forget", "local", "skills", "traces", "trace", "send mail", "mail search",
     "inbox", "drive", "upload", "sync", "git init", "commit", "push",
     "github repo", "every", "jobs", "linkedin", "vault",
   ];

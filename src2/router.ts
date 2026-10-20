@@ -14,7 +14,9 @@ export type Route = RouteCommands | RouteClarify | RouteChat;
 /** The canonical grammar the executor understands (mirrors the help text; keep in sync). */
 export const COMMAND_GRAMMAR = `
 - send mail to <address>: <body text>  OR  send mail to <address> asking for <thing>   (draft card, user taps Send)
-- inbox | check mail
+- inbox | check mail   (list recent mail)
+- mail search <query>   (find and read mail by sender/subject/content: "what does the 2step mail say", "any reply from Priya", "summarize the Google mail")
+- latest mail
 - hunt <search query>   (job search -> numbered shortlist)
 - apply to <job-url>   (one application, approval before anything submits)
 - apply to 1,3 | apply all   (picks from the last hunt shortlist)
@@ -60,7 +62,7 @@ export function routerPrompt(userText: string, memory = ""): ChatMessage[] {
         "Reply with STRICT JSON, one of:",
         '{"commands": ["<canonical command>", ...]}  - one or more commands, executed in order as a plan',
         '{"clarify": "<one short question>"}  - when a required detail is missing (e.g. no email address, no job URL, which account)',
-        '{"chat": true}  - general conversation or a question, not an action',
+        '{"chat": true}  - general conversation, not an action. NEVER chat for questions about the user\'s own mail, files, applications or schedule - those are commands (mail search, drive, applications, jobs).',
         "",
         "Rules:",
         "- Understand any phrasing: fix typos, translate Hinglish, ignore politeness filler.",

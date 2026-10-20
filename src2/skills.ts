@@ -78,6 +78,8 @@ export function skillManifest() {
 registerTool({ name: "jobs.hunt", description: "Search the web for job/internship postings and shortlist them", args: { query: { type: "string", required: true, description: "what to hunt" } }, risk: "read" });
 registerTool({ name: "jobs.apply", description: "Fill and (after approval) submit ONE job application in the live browser", args: { url: { type: "url", required: true, description: "posting URL" } }, risk: "identity", capAction: "apply", approval: true });
 registerTool({ name: "mail.send", description: "Send one email via the connected account (approval card first)", args: { to: { type: "string", required: true }, from: { type: "string" }, body: { type: "string", description: "email body; the model drafts one when omitted" } }, risk: "identity", capAction: "send_mail", approval: true });
+registerTool({ name: "mail.search", description: "Search recent inbox by sender/subject/content words", args: { query: { type: "string", required: true } }, risk: "read" });
+registerTool({ name: "mail.read", description: "Read the body of one inbox message by uid", args: {}, risk: "read" });
 registerTool({ name: "mail.inbox", description: "Read recent inbox subjects", args: {}, risk: "read" });
 registerTool({ name: "mail.draft", description: "Draft an email with the model (never sends)", args: { to: { type: "string", required: true } }, risk: "read" });
 registerTool({ name: "tracker.list", description: "List tracked applications", args: {}, risk: "read" });

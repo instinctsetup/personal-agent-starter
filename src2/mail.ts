@@ -68,6 +68,58 @@ export function findMailAccount(user: string): MailAccount | null {
   return listMailAccounts().find((a) => a.user.toLowerCase() === user.toLowerCase()) || null;
 }
 
+/** Test seam: replaced only by tests; production always reads live IMAP. */
+let inboxFetcher: ((limit: number) => Promise<MailSummary[]>) | null = null;
+let bodyFetcher: ((uid: number, maxChars: number) => Promise<string>) | null = null;
+export function setInboxFetcherForTests(f: typeof inboxFetcher, b: typeof bodyFetcher = null) { inboxFetcher = f; bodyFetcher = b; }
+
+const MAIL_STOPWORDS = new Set(["the", "a", "an", "mail", "email", "e-mail", "from", "about", "did", "any", "say", "says", "said", "what", "does", "do", "is", "my", "me", "show", "read", "check", "tell", "latest", "last", "recent", "new", "got", "get", "have", "has"]);
+
+/** Filter mail summaries by a free-text query: every distinctive word must hit from/subject/snippet
+ *  (alphanumeric-squash comparison so "2step" matches "2-Step"). Ranked by hits, newest kept. */
+export function filterMail(msgs: MailSummary[], query: string): MailSummary[] {
+  const words = query.toLowerCase().split(/[^a-z0-9@.]+/i).filter((w) => w.length > 1 && !MAIL_STOPWORDS.has(w));
+  if (!words.length) return msgs;
+  const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9@.]/g, "");
+  return msgs
+    .map((m) => {
+      const hay = `${m.from} ${m.subject} ${m.snippet}`.toLowerCase();
+      const sq = squash(hay);
+      const hits = words.filter((w) => hay.includes(w) || sq.includes(squash(w))).length;
+      return { m, hits };
+    })
+    .filter((s) => s.hits === words.length)
+    .sort((a, b) => b.hits - a.hits)
+    .map((s) => s.m);
+}
+
+/** Search the recent inbox (sender, subject, body snippet). Read-only. */
+export async function searchMail(query: string, limit = 30): Promise<MailSummary[]> {
+  const recent = inboxFetcher ? await inboxFetcher(limit) : await listInbox(limit);
+  return filterMail(recent, query).slice(0, 5);
+}
+
+/** Full-ish body of one message (by uid). Read-only. */
+export async function readMailBody(uid: number, maxChars = 2000): Promise<string> {
+  if (bodyFetcher) return bodyFetcher(uid, maxChars);
+  if (inboxFetcher) {
+    const all = await inboxFetcher(50);
+    return (all.find((x) => x.uid === uid)?.snippet || "").slice(0, maxChars);
+  }
+  const { user, pass, imapHost } = mailCreds();
+  const client = new ImapFlow({ host: imapHost, port: 993, secure: true, auth: { user, pass }, logger: false });
+  await client.connect();
+  try {
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      for await (const msg of client.fetch(String(uid), { bodyParts: ["text"] }, { uid: true })) {
+        return (msg.bodyParts?.get("text")?.toString("utf8") ?? "").replace(/\s+\n/g, "\n").slice(0, maxChars);
+      }
+      return "";
+    } finally { lock.release(); }
+  } finally { await client.logout().catch(() => {}); }
+}
+
 export async function listInbox(limit = 15): Promise<MailSummary[]> {
   const { user, pass, imapHost } = mailCreds();
   const client = new ImapFlow({ host: imapHost, port: 993, secure: true, auth: { user, pass }, logger: false });

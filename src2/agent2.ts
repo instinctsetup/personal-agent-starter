@@ -373,6 +373,26 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
   }
 }
 
+/** Free-chat grounding: the app's REAL capabilities + live connection state, so the model
+ *  never denies a capability that exists and names the connect command for ones that don't. */
+async function capabilityContext(): Promise<string> {
+  const { mailConfigured } = await import("./mail.js");
+  const { driveConfigured } = await import("./drive.js");
+  const mail = mailConfigured();
+  const drive = driveConfigured();
+  const li = getSetting("linkedin_enabled") === "1";
+  const apps = listApplications().length;
+  return [
+    "You are the assistant inside the user's own personal-agent app, with real tools and live data:",
+    `- Email: ${mail ? "CONNECTED - you can search and read their inbox and send with their approval" : "NOT connected (they can say 'connect email' to add a Gmail app password)"}`,
+    `- Google Drive: ${drive ? "CONNECTED - you can list and upload files" : "NOT connected (they can say 'connect drive')"}`,
+    `- LinkedIn assist: ${li ? "ON" : "off ('linkedin on' enables it)"}`,
+    `- Job tracker: ${apps} application(s) tracked; job hunt, applications, boards available`,
+    "- Live browser (forms, signups, browsing), scheduling, durable memory and plans.",
+    "Rules: NEVER claim you cannot access a CONNECTED service - the app can and does. If a question needs a live tool result you don't have in this chat, tell the user the exact thing to say (e.g. 'mail search <words>', 'drive', 'applications') instead of denying capability. If a service shows NOT connected, say so plainly and name the connect command.",
+  ].join("\n");
+}
+
 /** Fire-and-forget: pull durable facts/preferences out of an exchange. Never blocks the reply; secrets are filtered in addMemory. */
 function extractMemories(runId: string, userText: string, agentReply: string) {
   if (provider().offline) return;
@@ -393,6 +413,56 @@ function extractMemories(runId: string, userText: string, agentReply: string) {
       }
     })
     .catch(() => { /* memory is best-effort, never user-facing */ });
+}
+
+/** Mail questions are commands, not conversation. Deterministic - beats a flaky router model. */
+function matchMailQuery(cmd: string): { query: string; latest?: boolean } | null {
+  const canonical = cmd.match(/^mail search\s+(.+)$/i) || cmd.match(/^mail from\s+(.+)$/i);
+  if (canonical) return { query: canonical[1].trim() };
+  if (/^latest (?:e-?mail|mail)$/i.test(cmd)) return { query: "", latest: true };
+  if (/^(send|connect|draft|write|compose|reply)\b/i.test(cmd)) return null;
+  let m = cmd.match(/^(?:what does|what's|whats)\s+(?:the\s+)?(.+?)\s+(?:e-?mail|mail)\s+say/i);
+  if (m) return { query: m[1].trim() };
+  m = cmd.match(/\bany\s+(?:reply|response|mail|e-?mail|news)\s+from\s+(.+?)[.?!]?$/i);
+  if (m) return { query: m[1].trim() };
+  m = cmd.match(/^(?:did|has|have)\s+(.+?)\s+(?:reply|replied|respond|write|written|send|sent|mail)(?:\s+back)?/i);
+  if (m) return { query: m[1].trim() };
+  m = cmd.match(/^(?:summari[sz]e|read|show)\s+(?:my\s+|the\s+)?(last|latest|recent)\s+(?:e-?mails?|mails?|inbox)$/i);
+  if (m) return { query: "", latest: true };
+  m = cmd.match(/^(?:summari[sz]e|read|show)\s+(?:my\s+|the\s+)?(.+?)\s+(?:e-?mail|mail)$/i);
+  if (m) return { query: m[1].trim() };
+  m = cmd.match(/^latest\s+(?:e-?mail|mail)\s+from\s+(.+)$/i);
+  if (m) return { query: m[1].trim() };
+  return null;
+}
+
+async function answerMailQuery(runId: string, q: { query: string; latest?: boolean }): Promise<void> {
+  const { mailConfigured, searchMail, readMailBody } = await import("./mail.js");
+  if (!mailConfigured()) {
+    say(runId, "Email isn't connected yet, so there's no mailbox for me to read. To connect: say \`connect email\` and enter your Gmail address plus an app password (Google Account > Security > 2-Step Verification > App passwords). Once connected I can search and read your mail.");
+    return;
+  }
+  let matches;
+  try {
+    matches = await toolCall(runId, "mail.search", { query: q.query }, () => searchMail(q.query));
+  } catch (err: any) {
+    say(runId, `Couldn't reach your mailbox: ${err?.message || err}. The connection details may need a refresh - say \`connect email\` to re-enter them.`);
+    return;
+  }
+  if (!matches.length) {
+    say(runId, q.query ? `Nothing in your recent mail matches "${q.query}" (searched the last 30). Try different words from the sender or subject.` : "Your inbox is empty.");
+    return;
+  }
+  let body = "";
+  if (q.query || q.latest) {
+    try { body = await toolCall(runId, "mail.read", { uid: matches[0].uid }, () => readMailBody(matches[0].uid)); }
+    catch { /* the summary list below still answers */ }
+  }
+  say(runId, [
+    matches.length === 1 ? "Found it:" : `Found ${matches.length} matching mails - newest first:`,
+    ...matches.map((m, i) => `${i + 1}. ${m.from}\n   ${m.subject}${m.date ? ` (${new Date(m.date).toLocaleString()})` : ""}`),
+    body ? `\nThe newest one says:\n${body}` : `\nNewest snippet: ${matches[0].snippet}`,
+  ].join("\n"), { results: matches });
 }
 
 export async function handleUserMessage(text: string, routed = false): Promise<void> {
@@ -516,6 +586,12 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
 
   try {
     // LLM intent router: plain English -> canonical commands (regex cascade stays as offline fallback + executor)
+    // mail questions never reach free chat - deterministic, whatever the router model thinks
+    if (!routed) {
+      const mq = matchMailQuery(cmd);
+      if (mq) { await answerMailQuery(runId, mq); return; }
+    }
+
     if (!routed && !provider().offline) {
       const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", async () => {
         const routerModel = localEnabled() ? getSetting("local_router_model") : null;
@@ -541,9 +617,11 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return;
       }
       if (route && route.kind === "chat") {
-        // the model explicitly said conversation: skip the cascade, answer freely (with memory in context)
+        // the model explicitly said conversation: skip the cascade, answer freely (capabilities + memory in context)
+        const cap = await capabilityContext();
         const mem = memoryContext();
-        const chatMsgs = [...(mem ? [{ role: "system" as const, content: mem }] : []), { role: "user" as const, content: t }];
+        const sys = [cap, mem].filter(Boolean).join("\n\n");
+        const chatMsgs = [{ role: "system" as const, content: sys }, { role: "user" as const, content: t }];
         const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
         const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
         say(runId, out);
@@ -574,6 +652,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- traces / trace <run-id> - structured run logs: every tool call as a timed span tree",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
+        "- mail search <words> / latest mail - find and read mail (\"what does the 2step mail say\", \"any reply from Priya\")",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
         "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
         "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
@@ -935,6 +1014,8 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     }
 
     // natural-language email requests ("check my email", "any new mails?") - never fall through silently
+    const canonicalMailQ = matchMailQuery(cmd);
+    if (canonicalMailQ && lower !== "inbox") { await answerMailQuery(runId, canonicalMailQ); return; }
     const emailIntent = /\b(e-?mails?|inbox|gmail|mails?)\b/.test(lower) && !/^(send|connect|draft|write|compose)\b/.test(lower);
     if (lower === "inbox" || lower === "check mail" || lower === "check email" || emailIntent) {
       const msgs = await toolCall(runId, "mail.inbox", {}, async () => {
@@ -1186,8 +1267,10 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       say(runId, `I didn't recognise that as a command, and no AI model is connected yet, so I can't chat freely. Type \`connect gemini\` to add a free model, or \`help\` to see what I can do.`);
       return;
     }
+    const cap = await capabilityContext();
     const mem = memoryContext();
-    const chatMsgs = [...(mem ? [{ role: "system" as const, content: mem }] : []), { role: "user" as const, content: t }];
+    const sys = [cap, mem].filter(Boolean).join("\n\n");
+    const chatMsgs = [{ role: "system" as const, content: sys }, { role: "user" as const, content: t }];
     const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
     const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
     say(runId, out);
