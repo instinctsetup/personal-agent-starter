@@ -53,6 +53,23 @@ export async function typeText(text: string): Promise<void> {
   await p.keyboard.type(text);
 }
 
+export async function scrollBy(dx: number, dy: number): Promise<void> {
+  const p = await ensureBrowser();
+  await p.mouse.wheel(dx, dy);
+}
+
+export async function goBack(): Promise<string> {
+  const p = await ensureBrowser();
+  await p.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+  return p.url();
+}
+
+export async function goForward(): Promise<string> {
+  const p = await ensureBrowser();
+  await p.goForward({ waitUntil: "domcontentloaded" }).catch(() => {});
+  return p.url();
+}
+
 export async function pressKey(key: string): Promise<void> {
   const p = await ensureBrowser();
   await p.keyboard.press(key);

@@ -523,6 +523,9 @@ function BrowserTab() {
     else if (msg.type === "click") fetch("/api/browser/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x: msg.x, y: msg.y }) });
     else if (msg.type === "type") fetch("/api/browser/type", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: msg.text }) });
     else if (msg.type === "key") fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: msg.key }) });
+    else if (msg.type === "scroll") fetch("/api/browser/scroll", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ dx: msg.dx, dy: msg.dy }) });
+    else if (msg.type === "back") fetch("/api/browser/back", { method: "POST" });
+    else if (msg.type === "forward") fetch("/api/browser/forward", { method: "POST" });
   };
 
   // fallback path (no screencast): preload the next frame, swap only once it has fully loaded
@@ -554,6 +557,21 @@ function BrowserTab() {
     setBusy(false); setStarted(true); setTimeout(refreshShot, 300);
   };
 
+  // real keyboard control: focus the live view, then every key goes to the page
+  const KEY_NAMES = new Set(["Enter", "Backspace", "Tab", "Delete", "Escape", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", " "]);
+  const onViewKey = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return; // leave browser shortcuts alone
+    if (e.key.length === 1) castSend({ type: "type", text: e.key });
+    else if (KEY_NAMES.has(e.key)) castSend({ type: "key", key: e.key === " " ? "Space" : e.key });
+    else return;
+    e.preventDefault();
+    if (useFallback) setTimeout(refreshShot, 200);
+  };
+  const onViewWheel = (e: React.WheelEvent<HTMLElement>) => {
+    castSend({ type: "scroll", dx: Math.round(e.deltaX), dy: Math.round(e.deltaY) });
+    if (useFallback) setTimeout(refreshShot, 300);
+  };
+
   const clickView = (e: React.MouseEvent<HTMLElement>) => {
     const el = e.currentTarget;
     const rect = el.getBoundingClientRect();
@@ -563,6 +581,7 @@ function BrowserTab() {
     setRipples(rs => [...rs, { id, x: e.clientX - rect.left, y: e.clientY - rect.top }]);
     setTimeout(() => setRipples(rs => rs.filter(r => r.id !== id)), 500);
     castSend({ type: "click", x, y });
+    (e.currentTarget as HTMLElement).focus();
     if (useFallback) setTimeout(refreshShot, 400);
   };
 
@@ -571,6 +590,8 @@ function BrowserTab() {
       <div className="p-3 border-b border-slate-800 flex gap-2 items-center">
         <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => e.key === "Enter" && nav()}
           placeholder="https://…" className="flex-1 bg-[#161b22] border border-slate-700 rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500" />
+        <button onClick={() => { castSend({ type: "back" }); if (useFallback) setTimeout(refreshShot, 400); }} title="Back" className="bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-2 text-sm">&#8592;</button>
+        <button onClick={() => { castSend({ type: "forward" }); if (useFallback) setTimeout(refreshShot, 400); }} title="Forward" className="bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-2 text-sm">&#8594;</button>
         <button onClick={nav} disabled={busy} className="bg-sky-600 hover:bg-sky-500 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">Go</button>
         <button onClick={async () => { await fetch("/api/browser/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ user: !control }) }); setControl(!control); }}
           className={`rounded-lg px-4 py-2 text-sm font-semibold ${control ? "bg-amber-600 hover:bg-amber-500" : "bg-slate-700 hover:bg-slate-600"}`}>
@@ -587,11 +608,11 @@ function BrowserTab() {
       <div className="flex-1 overflow-auto bg-black/40 flex items-start justify-center p-3">
         <div className="relative max-w-full">
           {useFallback ? (
-            <img ref={imgRef} src="/api/browser/screenshot" onClick={clickView}
-              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" alt="live browser" draggable={false} />
+            <img ref={imgRef} src="/api/browser/screenshot" onClick={clickView} onKeyDown={onViewKey} onWheel={onViewWheel} tabIndex={0}
+              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none outline-none focus:border-sky-500" alt="live browser" draggable={false} />
           ) : (
-            <canvas ref={canvasRef} width={1280} height={800} onClick={clickView}
-              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" />
+            <canvas ref={canvasRef} width={1280} height={800} onClick={clickView} onKeyDown={onViewKey} onWheel={onViewWheel} tabIndex={0}
+              className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none outline-none focus:border-sky-500" />
           )}
           {ripples.map(r => (
             <span key={r.id} className="absolute pointer-events-none rounded-full border-2 border-sky-400"

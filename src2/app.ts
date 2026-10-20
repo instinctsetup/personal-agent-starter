@@ -69,6 +69,9 @@ export async function buildApp() {
         } else if (msg?.type === "click") await br.clickAt(Number(msg.x), Number(msg.y));
         else if (msg?.type === "type") await br.typeText(String(msg.text ?? ""));
         else if (msg?.type === "key") await br.pressKey(String(msg.key ?? "Enter"));
+        else if (msg?.type === "scroll") await br.scrollBy(Number(msg.dx) || 0, Number(msg.dy) || 0);
+        else if (msg?.type === "back") await br.goBack();
+        else if (msg?.type === "forward") await br.goForward();
         else if (msg?.type === "navigate" && msg.url) await br.navigate(String(msg.url));
       } catch { /* a bad input message must not kill the socket */ }
     });
@@ -194,6 +197,13 @@ export async function buildApp() {
     await br.pressKey(key);
     return { ok: true };
   });
+  app.post("/api/browser/scroll", async (req) => {
+    const { dx, dy } = req.body as { dx?: number; dy?: number };
+    await br.scrollBy(Number(dx) || 0, Number(dy) || 0);
+    return { ok: true };
+  });
+  app.post("/api/browser/back", async () => ({ ok: true, url: await br.goBack() }));
+  app.post("/api/browser/forward", async () => ({ ok: true, url: await br.goForward() }));
   app.get("/api/browser/state", async () => ({
     url: await br.currentUrl(),
     user_control: br.isUserControlling(),

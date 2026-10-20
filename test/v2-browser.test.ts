@@ -21,6 +21,7 @@ const PAGES: Record<string, string> = {
   "/plain": "<html><body><h1>hello</h1><p>nothing here</p></body></html>",
   "/captcha": '<html><body><div class="g-recaptcha" data-sitekey="x"></div><p>prove you are human</p></body></html>',
   "/twofa": "<html><body><p>Enter the verification code we sent to your phone</p><input></body></html>",
+  "/tall": '<html><body style="margin:0"><div style="height:4000px">top</div><div id="bottom">bottom</div></body></html>',
 };
 let server: Server;
 let base: string;
@@ -67,6 +68,20 @@ test("detectChallenge flags CAPTCHA and 2FA walls, stays quiet on plain pages", 
   assert.equal(await br.detectChallenge(), "2fa");
   await p.goto(base + "/plain", { waitUntil: "domcontentloaded" });
   assert.equal(await br.detectChallenge(), null);
+});
+
+test("live-view controls: wheel scrolls the page, back/forward walk history", async () => {
+  const p = await br.ensureBrowser();
+  await p.goto(base + "/plain", { waitUntil: "domcontentloaded" });
+  await p.goto(base + "/tall", { waitUntil: "domcontentloaded" });
+  await p.mouse.move(640, 400); // the wheel lands where the cursor is, like a real user
+  await p.waitForTimeout(100);
+  await br.scrollBy(0, 1200);
+  await p.waitForTimeout(100);
+  const y = await p.evaluate("window.scrollY");
+  assert.ok(y > 500, `wheel scrolled the page to y=${y}`);
+  assert.match(await br.goBack(), /\/plain$/, "back returns to the previous page");
+  assert.match(await br.goForward(), /\/tall$/, "forward re-enters the page");
 });
 
 test("take-control flag pauses/resumes cleanly", () => {
