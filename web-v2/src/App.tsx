@@ -459,19 +459,34 @@ function VaultTab() {
 function BrowserTab() {
   const [url, setUrl] = useState("");
   const [current, setCurrent] = useState<string | null>(null);
-  const [shot, setShot] = useState(0);
+  const [started, setStarted] = useState(false); // flips the placeholder to the <img> once, then pixels update via ref (no re-render, focus stays put)
   const [live, setLive] = useState(true);
   const [control, setControl] = useState(false);
   const [challenge, setChallenge] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const typeRef = useRef<HTMLInputElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  // live view: refresh the <img> pixels directly - never re-render the tab, so the
+  // URL box, the type box, and any half-typed text survive every refresh tick.
+  // double-buffer: preload the next frame, swap only once it has fully loaded - no blank frame, no flicker
+  const refreshShot = () => {
+    const next = new Image();
+    next.onload = () => { if (imgRef.current) imgRef.current.src = next.src; };
+    next.src = `/api/browser/screenshot?t=${Date.now()}`;
+  };
 
   useEffect(() => {
     if (!live) return;
     const id = setInterval(async () => {
-      setShot(s => s + 1);
+      refreshShot();
       const st = await fetch("/api/browser/state").then(r => r.json()).catch(() => null);
-      if (st) { setCurrent(st.url); setChallenge(st.challenge); setControl(st.user_control); }
+      if (st) {
+        setCurrent(st.url);
+        setChallenge(st.challenge);
+        setControl(st.user_control);
+        if (st.url) setStarted(true);
+      }
     }, 1200);
     return () => clearInterval(id);
   }, [live]);
@@ -480,7 +495,7 @@ function BrowserTab() {
     if (!url.trim()) return;
     setBusy(true);
     await fetch("/api/browser/navigate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ url: url.trim() }) });
-    setBusy(false); setShot(s => s + 1);
+    setBusy(false); setStarted(true); setTimeout(refreshShot, 300);
   };
 
   const clickImg = async (e: React.MouseEvent<HTMLImageElement>) => {
@@ -489,7 +504,7 @@ function BrowserTab() {
     const x = Math.round((e.clientX - rect.left) * (1280 / rect.width));
     const y = Math.round((e.clientY - rect.top) * (800 / rect.height));
     await fetch("/api/browser/click", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ x, y }) });
-    setTimeout(() => setShot(s => s + 1), 400);
+    setTimeout(refreshShot, 400);
   };
 
   return (
@@ -511,8 +526,8 @@ function BrowserTab() {
         </div>
       )}
       <div className="flex-1 overflow-auto bg-black/40 flex items-start justify-center p-3">
-        {current || shot > 0 ? (
-          <img key={shot} src={`/api/browser/screenshot?t=${shot}`} onClick={clickImg}
+        {started || current ? (
+          <img ref={imgRef} src="/api/browser/screenshot" onClick={clickImg}
             className="max-w-full rounded-lg border border-slate-700 cursor-crosshair select-none" alt="live browser" draggable={false} />
         ) : (
           <div className="text-slate-500 text-sm mt-20 text-center">
@@ -525,10 +540,10 @@ function BrowserTab() {
         <input ref={typeRef} placeholder="Type into page…" onKeyDown={async e => {
           if (e.key === "Enter" && typeRef.current?.value) {
             await fetch("/api/browser/type", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: typeRef.current.value }) });
-            typeRef.current.value = ""; setTimeout(() => setShot(s => s + 1), 300);
+            typeRef.current.value = ""; setTimeout(refreshShot, 300);
           }
         }} className="w-64 bg-[#161b22] border border-slate-700 rounded px-2 py-1 outline-none focus:border-sky-500" />
-        <button onClick={async () => { await fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "Enter" }) }); setTimeout(() => setShot(s => s + 1), 300); }}
+        <button onClick={async () => { await fetch("/api/browser/key", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key: "Enter" }) }); setTimeout(refreshShot, 300); }}
           className="bg-slate-700 hover:bg-slate-600 rounded px-2 py-1">Enter</button>
       </div>
     </div>
