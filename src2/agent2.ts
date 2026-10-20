@@ -5,6 +5,7 @@ import { requestApproval, waitApproval } from "./approvals.js";
 import { checkCap, recordAction, capStatus, setCap, DEFAULT_CAPS } from "./caps.js";
 import { createPlan, getPlan, listPlans, cancelPlan, runPlan, type Plan } from "./plans.js";
 import { addMemory, listMemories, forgetMemory, forgetAll, memoryContext } from "./memory.js";
+import { localEnabled, localStatus, ollamaChat, pullModel, setLocalEnabled } from "./local.js";
 import { webSearch } from "./search.js";
 import { addApplication, listApplications } from "./tracker.js";
 import { listCredentials, saveCredential, getCredential } from "./vault.js";
@@ -150,6 +151,15 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
       label: "openrouter/llama-3.3-70b:free",
       run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", orKey, signal).chat(messages, opts),
     });
+  }
+  if (localEnabled()) {
+    const chatModel = getSetting("local_chat_model");
+    if (chatModel) {
+      racers.push({
+        label: `local/${chatModel}`,
+        run: () => ollamaChat(chatModel, messages as { role: string; content: string }[]),
+      });
+    }
   }
   const all = racers.concat(geminiRest);
   if (includeWeb && geminiWebEnabled()) {
@@ -473,7 +483,14 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
   try {
     // LLM intent router: plain English -> canonical commands (regex cascade stays as offline fallback + executor)
     if (!routed && !provider().offline) {
-      const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
+      const route = await routeWithModel(text, (msgs) => withProgress(runId, "Understanding your request", async () => {
+        const routerModel = localEnabled() ? getSetting("local_router_model") : null;
+        if (routerModel) {
+          try { return await ollamaChat(routerModel, msgs as { role: string; content: string }[], 8000); }
+          catch { /* local router down/slow - the cloud race takes it */ }
+        }
+        return modelRace(runId, msgs, undefined, true);
+      }, Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
       if (route && route.kind === "clarify") {
         pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
         say(runId, route.question);
@@ -517,6 +534,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- plan <goal> / plans / resume plan <id> / cancel plan <id> - durable multi-step plans with retries + self-correction",
         "- caps / cap <action> <N> - per-day limits on sends and applications",
         "- remember <fact> / memories / forget <id> - durable memory across sessions (secrets stay in the vault)",
+        "- local / local setup / local on|off - private on-device models via Ollama (auto-detects your GPU, cloud race as fallback)",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -621,6 +639,69 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     if (mCancelPlan) {
       const p = cancelPlan(mCancelPlan[1]);
       say(runId, p ? `Plan ${p.id} cancelled - remaining steps skipped. Its checkpoints stay on record.` : `No plan with id ${mCancelPlan[1]}.`);
+      return;
+    }
+
+    // ---- local SLMs via Ollama ----------------------------------------------
+    if (lower === "local" || lower === "local status") {
+      const st = await toolCall(runId, "local.status", {}, () => localStatus());
+      if (!st.ollama) {
+        say(runId, [
+          "Ollama isn't running (or isn't installed). Local models are optional - the free cloud race already covers you.",
+          "To add private, offline, zero-quota answers: install Ollama from https://ollama.com/download/windows, then say `local setup`.",
+        ].join("\n"));
+        return;
+      }
+      if (!st.tier) {
+        say(runId, `Ollama is running, but ${st.vramMb ? `your GPU has only ${st.vramMb}MB VRAM` : "I couldn't find an NVIDIA GPU"} - local models aren't worth it here. The cloud race carries the load. (CPU-only models would be painfully slow; I won't pretend otherwise.)`);
+        return;
+      }
+      say(runId, [
+        `Local models: ${st.enabled ? "ON" : "OFF"} - ${st.tier.note}`,
+        `- chat model: ${st.tier.chat} ${st.ready.includes(st.tier.chat) ? "(pulled)" : "(not pulled)"}`,
+        `- router model: ${st.tier.router} ${st.ready.includes(st.tier.router) ? "(pulled)" : "(not pulled)"}`,
+        st.missing.length ? `Say \`local setup\` to pull ${st.missing.join(" and ")} (one-time download).` : st.enabled ? "Routing runs on the 1B model locally; chat races your local 2B against the free cloud - first good answer wins." : "Say \`local on\` to use them.",
+      ].join("\n"));
+      return;
+    }
+    if (lower === "local on") {
+      const st = await toolCall(runId, "local.status", {}, () => localStatus());
+      if (!st.ollama || !st.tier) { say(runId, "Ollama or a usable GPU isn't there - see `local status`."); return; }
+      if (st.missing.length) { say(runId, `Pull the model(s) first: \`local setup\` (${st.missing.join(", ")} missing).`); return; }
+      setLocalEnabled(true);
+      setSetting("local_chat_model", st.tier.chat);
+      setSetting("local_router_model", st.tier.router);
+      say(runId, `Local models on: ${st.tier.chat} joins the answer race, ${st.tier.router} handles routing privately on your GPU. If either stumbles, the free cloud race takes over automatically.`);
+      return;
+    }
+    if (lower === "local off") {
+      setLocalEnabled(false);
+      say(runId, "Local models off - everything runs on the free cloud race again.");
+      return;
+    }
+    if (lower === "local setup") {
+      const st = await toolCall(runId, "local.status", {}, () => localStatus());
+      if (!st.ollama) { say(runId, "Install Ollama first: https://ollama.com/download/windows - then say `local setup` again."); return; }
+      if (!st.tier) { say(runId, "No usable NVIDIA GPU found (or under 2GB VRAM) - skipping local models honestly; the cloud race is the right answer on this machine."); return; }
+      if (!st.missing.length) { say(runId, `Both models are already pulled. Say \`local on\`.`); return; }
+      for (const m of st.missing) {
+        say(runId, `Pulling ${m} (one-time download, a few hundred MB)...`);
+        let lastPct = -20;
+        try {
+          await pullModel(m, (pct, detail) => {
+            if (pct - lastPct >= 20) { lastPct = pct; emit({ ts: Date.now(), run_id: runId, kind: "status", state: "waiting", label: `pull ${m}`, text: `Pulling ${m}: ${pct}% (${detail})` }, false); }
+          });
+        } catch (e: any) {
+          say(runId, `Pull of ${m} failed: ${e?.message || e}. Check Ollama is running (\`ollama serve\`) and try \`local setup\` again.`);
+          return;
+        }
+        say(runId, `${m} pulled.`);
+      }
+      setSetting("local_chat_model", st.tier.chat);
+      setSetting("local_router_model", st.tier.router);
+      setLocalEnabled(true);
+      const envNote = "For more context on a 4GB card: set OLLAMA_KV_CACHE_TYPE=q8_0 and OLLAMA_FLASH_ATTENTION=1 (halves context memory).";
+      say(runId, `Local models ready and ON: ${st.tier.chat} (chat) + ${st.tier.router} (routing). Verify GPU residency anytime with \`ollama ps\` (PROCESSOR should read 100% GPU). ${envNote}`);
       return;
     }
 
