@@ -40,6 +40,13 @@ if (existsSync('data/settings.json')) {
 }
 if (isWindows()) {
   ok('autostart at sign-in', isAutostartInstalled(), 'npm run doctor --install-autostart enables it');
+  // Google blocks sign-in on the bundled automation Chromium; a real installed browser fixes it.
+  const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const edge = existsSync(join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe')) || existsSync(join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
+  const chrome = existsSync(join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe')) || existsSync(join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  ok('real browser for Google sign-in', edge || chrome,
+     edge || chrome ? `found: ${[edge && 'Edge', chrome && 'Chrome'].filter(Boolean).join(', ')} - say "use my real browser" in chat` : 'install Edge or Chrome, then say "use my real browser" in chat');
 }
 let failed = 0;
 for (const c of checks) {

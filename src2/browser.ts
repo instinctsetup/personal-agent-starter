@@ -1,8 +1,40 @@
 /** Live browser engine: one persistent Playwright context the daemon drives and the UI watches. */
 import { chromium, type BrowserContext, type Page, type CDPSession } from "playwright";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
-import { DATA_DIR } from "./db.js";
+import { mkdirSync, existsSync } from "node:fs";
+import { DATA_DIR, getSetting, setSetting } from "./db.js";
+
+/** Which browser binary backs the shared context. "bundled" = Playwright Chromium (headless);
+ *  "msedge"/"chrome" = his REAL installed browser (headed window, own automation profile).
+ *  Google blocks sign-in on bundled automation Chromium ("this browser may not be secure") -
+ *  a real Edge/Chrome binary passes because it IS a normal browser he logs into himself. */
+export type BrowserChannel = "bundled" | "msedge" | "chrome";
+
+/** Standard install locations (used by the doctor check and "use my real browser"). */
+export function installedBrowsers(platform = process.platform, env: Record<string, string | undefined> = process.env): { edge: boolean; chrome: boolean } {
+  if (platform !== "win32") return { edge: false, chrome: false };
+  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+  const pf = env["ProgramFiles"] || "C:\\Program Files";
+  return {
+    edge: existsSync(join(pf86, "Microsoft", "Edge", "Application", "msedge.exe")) || existsSync(join(pf, "Microsoft", "Edge", "Application", "msedge.exe")),
+    chrome: existsSync(join(pf, "Google", "Chrome", "Application", "chrome.exe")) || existsSync(join(pf86, "Google", "Chrome", "Application", "chrome.exe")),
+  };
+}
+
+/** Pick the best real browser: Edge first (every Windows 11 has it), then Chrome. */
+export function pickRealBrowser(avail: { edge: boolean; chrome: boolean }): BrowserChannel | null {
+  return avail.edge ? "msedge" : avail.chrome ? "chrome" : null;
+}
+
+export function browserChannel(): BrowserChannel {
+  const v = getSetting("browser_channel");
+  return v === "msedge" || v === "chrome" ? v : "bundled";
+}
+export function setBrowserChannel(ch: BrowserChannel): void { setSetting("browser_channel", ch); }
+
+export function browserProfileDir(channel: BrowserChannel): string {
+  return join(DATA_DIR, channel === "bundled" ? "browser-profile" : `browser-profile-${channel}`);
+}
 
 let context: BrowserContext | null = null;
 let page: Page | null = null;
@@ -14,14 +46,30 @@ export function setUserControl(v: boolean): void { userControl = v; }
 let launchInFlight: Promise<BrowserContext> | null = null;
 
 async function launchContext(): Promise<BrowserContext> {
-  mkdirSync(join(DATA_DIR, "browser-profile"), { recursive: true });
-  return chromium.launchPersistentContext(join(DATA_DIR, "browser-profile"), {
-    headless: true,
-    // Plain Chromium, no stealth or fingerprint spoofing: default UA, default flags,
-    // no webdriver-property patching. Sites see this exactly as an automated browser.
-    args: ["--no-sandbox"],
-    viewport: { width: 1280, height: 800 },
-  });
+  const channel = browserChannel();
+  const dir = browserProfileDir(channel);
+  mkdirSync(dir, { recursive: true });
+  if (channel === "bundled") {
+    return chromium.launchPersistentContext(dir, {
+      headless: true,
+      // Plain Chromium, no stealth or fingerprint spoofing: default UA, default flags,
+      // no webdriver-property patching. Sites see this exactly as an automated browser.
+      args: ["--no-sandbox"],
+      viewport: { width: 1280, height: 800 },
+    });
+  }
+  // Real installed Edge/Chrome, HEADED (a normal window on his laptop - he signs into
+  // Google there himself once; the dedicated automation profile keeps it separate from
+  // his personal browser profile). No flag games, no UA spoofing.
+  try {
+    return await chromium.launchPersistentContext(dir, {
+      channel,
+      headless: false,
+      viewport: { width: 1280, height: 800 },
+    });
+  } catch (err: any) {
+    throw new Error(`Couldn't launch the real ${channel === "msedge" ? "Microsoft Edge" : "Chrome"} (${err?.message || err}). Say \`browser bundled\` to switch back to the built-in browser.`);
+  }
 }
 
 export async function ensureBrowser(): Promise<Page> {
@@ -106,6 +154,11 @@ export async function detectChallenge(): Promise<string | null> {
   if (html.includes("g-recaptcha") || html.includes("hcaptcha") || html.includes("cf-challenge")) return "captcha";
   if (/two[- ]factor|2fa|verification code|authenticator/.test(html)) return "2fa";
   return null;
+}
+
+/** Drop the current context so the next ensureBrowser() relaunches on the current channel. */
+export async function restartBrowser(): Promise<void> {
+  await closeBrowser();
 }
 
 export async function closeBrowser(): Promise<void> {

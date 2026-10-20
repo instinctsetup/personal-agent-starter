@@ -59,6 +59,8 @@ export function matchSystemCommand(cmd: string): string | null {
   if (/^(?:what needs a reply|mail triage|triage|anything needs? (?:a )?(?:reply|response)|who'?s waiting on (?:me|a reply))$/i.test(c)) return "what needs a reply";
   if (/^notes$/i.test(c)) return "notes";
   if (/^(?:file history|file ops|what files did i (?:move|rename|delete|change))$/i.test(c)) return "file history";
+  if (/^(?:use my real browser|real browser)$/i.test(c)) return "use my real browser";
+  if (/^browser (?:status|bundled)$/i.test(c)) return c.toLowerCase();
   if (/^(?:version|what version|which version)(?: are you(?: running)?)?$/i.test(c)) return "version";
   const mOpen = c.match(/^open ([a-z0-9 ]{2,25})$/i);
   if (mOpen && isKnownApp(mOpen[1].trim()) && !/[./]/.test(mOpen[1])) return `open ${mOpen[1].trim()}`;

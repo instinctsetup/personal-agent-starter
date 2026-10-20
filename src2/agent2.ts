@@ -753,6 +753,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- quota - today's free-tier model usage per provider, so you never hit a wall mid-task",
         "- linkedin message <profile-url>: <text> / connect with <profile-url> on linkedin - approval-gated, daily-capped",
         "- vault - list stored credentials (secrets never shown)",
+        "- use my real browser / browser status / browser bundled - run the Browser tab in your real Edge/Chrome (Google sign-in works there)",
         "- laptop status - battery, RAM, disk free, CPU at a glance",
         "- what's on my clipboard / copy <text> - read or set the clipboard",
         "- open <app> - launch an allow-listed app (chrome, vscode, notepad, calculator, explorer, spotify); open <url> still browses",
@@ -1537,6 +1538,37 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       say(runId, js.length
         ? js.map((j) => `- ${j.spec.command} (${j.spec.interval_min ? `every ${j.spec.interval_min} min` : "once"}, next ${new Date(j.next_ts).toLocaleString()})${j.enabled ? "" : " [paused]"}`).join("\n")
         : "Nothing scheduled. Try `every 2 hours search AI internships` or `at 18:30 tracker`.");
+      return;
+    }
+
+    // ---- real browser channel (Google sign-in fix) -------------------------
+    if (/^(?:use my real browser|real browser|use (?:edge|chrome|my (?:real )?(?:edge|chrome)))$/i.test(cmd)) {
+      const { installedBrowsers, pickRealBrowser, setBrowserChannel, restartBrowser } = await import("./browser.js");
+      const pick = pickRealBrowser(installedBrowsers());
+      if (!pick) { say(runId, "I couldn't find Edge or Chrome installed in the standard places. If you have Chrome somewhere custom, tell me where and I'll add the path."); return; }
+      setBrowserChannel(pick);
+      await restartBrowser();
+      say(runId, [
+        `Switched to your real ${pick === "msedge" ? "Microsoft Edge" : "Chrome"}. From now on the Browser tab opens as a normal ${pick === "msedge" ? "Edge" : "Chrome"} window on your laptop:`,
+        "- Sign into Google (and any other site) there yourself, once - it's your real browser, so Google lets you in.",
+        "- The assistant reuses that signed-in session for sign-ups, forms and applications.",
+        "- It gets its own separate profile, so your personal browser data is untouched.",
+        "Say `browser bundled` to go back to the built-in browser.",
+      ].join("\n"));
+      return;
+    }
+    if (/^browser bundled$/i.test(cmd)) {
+      const { setBrowserChannel, restartBrowser } = await import("./browser.js");
+      setBrowserChannel("bundled");
+      await restartBrowser();
+      say(runId, "Back to the built-in browser (headless Chromium, shown in the Browser tab). Note: Google sign-in blocks that one - `use my real browser` is the fix.");
+      return;
+    }
+    if (/^browser status$/i.test(cmd)) {
+      const { browserChannel, installedBrowsers } = await import("./browser.js");
+      const avail = installedBrowsers();
+      const ch = browserChannel();
+      say(runId, `Browser: ${ch === "bundled" ? "built-in Chromium (Google sign-in gets blocked here)" : `real ${ch === "msedge" ? "Microsoft Edge" : "Chrome"} - Google sign-in works`}.\nInstalled: Edge ${avail.edge ? "yes" : "no"}, Chrome ${avail.chrome ? "yes" : "no"}.\nSay \`use my real browser\` to switch, \`browser bundled\` to switch back.`);
       return;
     }
 
