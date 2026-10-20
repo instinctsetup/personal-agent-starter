@@ -14,10 +14,10 @@ action behind an approval card you can edit before anything happens.
 
 ```bash
 npm install
-npm start          # builds the UI + daemon, opens http://127.0.0.1:3090
+npm start          # builds the UI + daemon, opens http://127.0.0.1:8787
 ```
 
-Requires Node 20+. First run: `npx playwright install chromium` for the browser features.
+Requires Node 22+. First run: `npx playwright install chromium` for the browser features.
 No terminal needed after that - daily use is the web UI.
 
 ## Stack

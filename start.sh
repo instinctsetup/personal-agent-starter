@@ -16,9 +16,10 @@ if [ ! -d node_modules ]; then
   npm install
   npx playwright install chromium
 fi
-if [ ! -d dist ] || [ src -nt dist ]; then
+if [ ! -d dist ] || [ src2 -nt dist ] || [ ! -d web-v2/dist ]; then
   npm run build
+  npm run build:ui
 fi
 echo "Starting Personal Agent..."
 (sleep 2; (command -v open >/dev/null && open http://127.0.0.1:8787) || (command -v xdg-open >/dev/null && xdg-open http://127.0.0.1:8787) || true) &
-node dist/server.js
+node dist/src2/server.js
