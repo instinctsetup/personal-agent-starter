@@ -19,6 +19,7 @@ import { GeminiProvider, GeminiError } from "../src/providers/gemini.js";
 import { geminiWebEnabled, geminiWebChat, flattenMessages } from "./geminiweb.js";
 import { routeWithModel } from "./router.js";
 import { systemInfo, clipboardRead, clipboardWrite, launchApp, isKnownApp } from "./winops.js";
+import { planRename, planDownloadsCleanup, applyMoves, undoLast, downloadsDir, fmtMoves, type Move } from "./fileops.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -684,6 +685,8 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- laptop status - battery, RAM, disk free, CPU at a glance",
         "- what's on my clipboard / copy <text> - read or set the clipboard",
         "- open <app> - launch an allow-listed app (chrome, vscode, notepad, calculator, explorer, spotify); open <url> still browses",
+        "- rename files in <dir> from <text> to <text> - batch rename with an approval card + undo last rename",
+        "- clean up my downloads - archives files older than 30 days into _archive/<month>/ (approval card shows every move; daily-capped; undo last cleanup)",
       ].join("\n"));
       return;
     }
@@ -1432,6 +1435,76 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         say(runId, `Opening ${label}.`);
       } catch (err: any) {
         say(runId, err?.message || "Couldn't open that app.");
+      }
+      return;
+    }
+
+    // ---- batch rename & downloads cleanup (approval-gated, undoable) --------
+    const mRename = cmd.match(/^rename files in\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+)$/i);
+    if (mRename) {
+      const [, dir, find, replace] = mRename;
+      try {
+        const moves = planRename(dir, find, replace);
+        if (!moves.length) { say(runId, `No files in ${dir} contain "${find}" in their name.`); return; }
+        const summary = `Rename ${moves.length} file(s) in ${dir}:\n${fmtMoves(moves)}\n\nApprove applies the renames (undo last rename reverses them).`;
+        const card = requestApproval("fs_rename", summary, { moves }, runId);
+        say(runId, summary, { approval_id: card.id });
+        const res = await waitApproval(card.id);
+        if (res.status !== "approved") {
+          say(runId, res.status === "expired" ? "Approval expired - nothing renamed." : "Cancelled - nothing renamed.");
+          return;
+        }
+        const approved = (res.payload?.moves ?? moves) as Move[];
+        const done = await toolCall(runId, "fs.rename", { count: approved.length }, async () => applyMoves(approved, "rename"));
+        say(runId, `Renamed ${done.length} file(s). Say \`undo last rename\` to reverse.`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't rename those files.");
+      }
+      return;
+    }
+    if (/^undo last rename$/i.test(cmd)) {
+      try {
+        const r = await toolCall(runId, "fs.undo_rename", {}, async () => undoLast("rename"));
+        say(runId, `Undid ${r.reversed} rename(s).${r.skipped ? ` ${r.skipped} could not be reversed (file moved or name taken since).` : ""}`);
+      } catch (err: any) {
+        say(runId, err?.message || "Nothing to undo.");
+      }
+      return;
+    }
+
+    if (/^clean up my downloads$/i.test(cmd)) {
+      const cap = checkCap("cleanup");
+      if (!cap.allowed) {
+        say(runId, `Daily cleanup cap reached (${cap.used}/${cap.cap}). Say \`cap cleanup <N>\` to raise it.`);
+        return;
+      }
+      try {
+        const dir = downloadsDir();
+        const moves = planDownloadsCleanup(dir);
+        if (!moves.length) { say(runId, "Nothing older than 30 days in Downloads - it's already tidy."); return; }
+        const summary = `Archive ${moves.length} file(s) from Downloads into _archive/<month>/:\n${fmtMoves(moves)}\n\nApprove moves them (undo last cleanup reverses it).`;
+        const card = requestApproval("fs_cleanup", summary, { moves }, runId);
+        say(runId, summary, { approval_id: card.id });
+        const res = await waitApproval(card.id);
+        if (res.status !== "approved") {
+          say(runId, res.status === "expired" ? "Approval expired - nothing moved." : "Cancelled - nothing moved.");
+          return;
+        }
+        const approved = (res.payload?.moves ?? moves) as Move[];
+        const done = await toolCall(runId, "fs.cleanup", { count: approved.length }, async () => applyMoves(approved, "cleanup"));
+        recordAction("cleanup", dir);
+        say(runId, `Archived ${done.length} file(s) into _archive/<month>/. Say \`undo last cleanup\` to reverse.`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't clean up Downloads.");
+      }
+      return;
+    }
+    if (/^undo last cleanup$/i.test(cmd)) {
+      try {
+        const r = await toolCall(runId, "fs.undo_cleanup", {}, async () => undoLast("cleanup"));
+        say(runId, `Restored ${r.reversed} file(s) to Downloads.${r.skipped ? ` ${r.skipped} could not be restored.` : ""}`);
+      } catch (err: any) {
+        say(runId, err?.message || "Nothing to undo.");
       }
       return;
     }
