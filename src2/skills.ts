@@ -105,7 +105,7 @@ registerTool({ name: "system.info", description: "Laptop snapshot: battery, RAM,
 registerTool({ name: "clipboard.read", description: "Read the text clipboard", args: {}, risk: "read" });
 registerTool({ name: "clipboard.write", description: "Copy text to the clipboard", args: { length: { type: "string", description: "character count" } }, risk: "write" });
 registerTool({ name: "app.launch", description: "Launch an allow-listed app (notepad, calculator, chrome...) - never an arbitrary exe", args: { app: { type: "string", required: true } }, risk: "write" });
-registerTool({ name: "fs.rename", description: "Batch-rename files in a folder (approval card + undo)", args: {}, risk: "write" });
+registerTool({ name: "fs.rename", description: "Batch-rename files in a folder (approval card + undo)", args: {}, risk: "write", capAction: "rename" });
 registerTool({ name: "fs.cleanup", description: "Archive old downloads into _archive/<month>/ (approval card, daily cap, undo)", args: {}, risk: "write", capAction: "cleanup" });
 registerTool({ name: "fs.undo_rename", description: "Reverse the most recent rename batch", args: {}, risk: "write" });
 registerTool({ name: "fs.undo_cleanup", description: "Reverse the most recent cleanup batch", args: {}, risk: "write" });

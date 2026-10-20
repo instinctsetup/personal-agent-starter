@@ -15,9 +15,15 @@ export function installedBrowsers(platform = process.platform, env: Record<strin
   if (platform !== "win32") return { edge: false, chrome: false };
   const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
   const pf = env["ProgramFiles"] || "C:\\Program Files";
+  // Chrome's installer defaults to a PER-USER install under %LocalAppData% whenever it
+  // runs without admin rights - the exact no-admin machine this app targets - and many
+  // Edge installs land there too. Check both machine-wide and per-user locations.
+  const local = env["LocalAppData"] || join(env["USERPROFILE"] || "C:\\Users\\Default", "AppData", "Local");
+  const edgePaths = [pf86, pf, local].map((b) => join(b, "Microsoft", "Edge", "Application", "msedge.exe"));
+  const chromePaths = [pf, pf86, local].map((b) => join(b, "Google", "Chrome", "Application", "chrome.exe"));
   return {
-    edge: existsSync(join(pf86, "Microsoft", "Edge", "Application", "msedge.exe")) || existsSync(join(pf, "Microsoft", "Edge", "Application", "msedge.exe")),
-    chrome: existsSync(join(pf, "Google", "Chrome", "Application", "chrome.exe")) || existsSync(join(pf86, "Google", "Chrome", "Application", "chrome.exe")),
+    edge: edgePaths.some((p) => existsSync(p)),
+    chrome: chromePaths.some((p) => existsSync(p)),
   };
 }
 

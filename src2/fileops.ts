@@ -40,6 +40,20 @@ export function ledgerList(limit = 10): LedgerEntry[] {
   return out;
 }
 
+/** Rename handling the Windows/NTFS case-only-rename quirk: "a.pdf" -> "A.pdf" fails
+ * (or is a silent no-op) via a direct rename() because the OS sees the target as
+ * "already existing" - it IS the same file, different case. Route through a
+ * throwaway intermediate name in that one case. */
+function safeRename(from: string, to: string): void {
+  if (from.toLowerCase() === to.toLowerCase() && from !== to) {
+    const tmp = `${from}.pa-tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    renameSync(from, tmp);
+    renameSync(tmp, to);
+  } else {
+    renameSync(from, to);
+  }
+}
+
 /** Reverse one specific ledger entry by timestamp (from the file-history view / Traces tab). */
 export function undoEntry(ts: number): { reversed: number; skipped: number } {
   const entry = ledgerList(100).find((e) => e.ts === ts);
@@ -50,7 +64,7 @@ export function undoEntry(ts: number): { reversed: number; skipped: number } {
   for (const mv of [...entry.moves].reverse()) {
     if (!existsSync(mv.to) || existsSync(mv.from)) { remaining.push(mv); skipped++; continue; }
     mkdirSync(dirname(mv.from), { recursive: true });
-    renameSync(mv.to, mv.from);
+    safeRename(mv.to, mv.from);
     reversed++;
   }
   const lines = readFileSync(LEDGER, "utf8").trim().split("\n").filter(Boolean);
@@ -68,9 +82,10 @@ export function applyMoves(moves: Move[], kind: string): Move[] {
   const done: Move[] = [];
   for (const mv of moves) {
     if (!existsSync(mv.from)) continue; // vanished since the plan - skip
-    if (existsSync(mv.to)) throw new Error(`Refusing to overwrite ${mv.to} - a file with that name already exists. Applied ${done.length}/${moves.length} move(s) before stopping.`);
+    const sameFile = mv.from.toLowerCase() === mv.to.toLowerCase() && mv.from !== mv.to;
+    if (existsSync(mv.to) && !sameFile) throw new Error(`Refusing to overwrite ${mv.to} - a file with that name already exists. Applied ${done.length}/${moves.length} move(s) before stopping.`);
     mkdirSync(dirname(mv.to), { recursive: true });
-    renameSync(mv.from, mv.to);
+    safeRename(mv.from, mv.to);
     done.push(mv);
   }
   if (done.length) ledgerAppend(kind, done);
@@ -87,7 +102,7 @@ export function undoLast(kind: string): { reversed: number; skipped: number } {
   for (const mv of [...entry.moves].reverse()) {
     if (!existsSync(mv.to) || existsSync(mv.from)) { remaining.push(mv); skipped++; continue; }
     mkdirSync(dirname(mv.from), { recursive: true });
-    renameSync(mv.to, mv.from);
+    safeRename(mv.to, mv.from);
     reversed++;
   }
   // rewrite the ledger without the reversed entry (keep any moves that could not be reversed)
@@ -102,8 +117,13 @@ export function undoLast(kind: string): { reversed: number; skipped: number } {
 }
 
 /** Plan a batch rename: files in dir whose name contains `find` get it replaced with `replace`. */
+const PROTECTED_DIR_RE = /^[a-z]:\\?$|\\windows(\\|$)|\\program files/i;
+
 export function planRename(dir: string, find: string, replace: string): Move[] {
   if (!find) throw new Error("Nothing to find - give me the text to replace in the filenames.");
+  if (PROTECTED_DIR_RE.test(dir.trim())) {
+    throw new Error(`${dir} looks like a system folder - I won't batch-rename there. Point me at a folder under your profile (Downloads, Documents, Desktop, ...).`);
+  }
   if (!existsSync(dir)) throw new Error(`${dir} does not exist.`);
   const moves: Move[] = [];
   for (const name of readdirSync(dir)) {
@@ -132,8 +152,23 @@ export function planDownloadsCleanup(downloadsDir: string, olderThanDays = 30, n
   return moves;
 }
 
-export function downloadsDir(): string {
-  return join(process.env.USERPROFILE || process.env.HOME || ".", "Downloads");
+let cachedDownloadsDir: string | null = null;
+
+/** Resolve the REAL Downloads folder via the Windows known-folder API, not a hardcoded
+ * guess - on a OneDrive Known-Folder-Move machine %USERPROFILE%\\Downloads can be stale
+ * or empty while every browser's actual save target is the OneDrive-redirected path. */
+export async function downloadsDir(): Promise<string> {
+  if (cachedDownloadsDir) return cachedDownloadsDir;
+  const fallback = join(process.env.USERPROFILE || process.env.HOME || ".", "Downloads");
+  if (process.platform !== "win32") { cachedDownloadsDir = fallback; return fallback; }
+  try {
+    const { runPs } = await import("./winops.js");
+    const out = (await runPs('(New-Object -ComObject Shell.Application).NameSpace("shell:Downloads").Self.Path')).trim();
+    cachedDownloadsDir = out && existsSync(out) ? out : fallback;
+  } catch {
+    cachedDownloadsDir = fallback;
+  }
+  return cachedDownloadsDir;
 }
 
 export function fmtMoves(moves: Move[], max = 15): string {

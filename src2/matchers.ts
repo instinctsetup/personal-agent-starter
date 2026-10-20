@@ -11,7 +11,25 @@ export const DEFAULT_CHANNEL: ChannelId = "web";
 export const recentTurns = new Map<ChannelId, { role: "user" | "agent"; text: string; ts: number }[]>();
 export const runChannel = new Map<string, ChannelId>();
 
+/** runChannel grows by one entry per handled message - on an autostarted 24/7 daemon
+ * that is unbounded. Keep the newest N (insertion order) and drop the rest. */
+const MAX_RUN_CHANNEL_ENTRIES = 2000;
+export function rememberRunChannel(runId: string, channel: ChannelId): void {
+  runChannel.set(runId, channel);
+  if (runChannel.size > MAX_RUN_CHANNEL_ENTRIES) {
+    const oldest = runChannel.keys().next().value;
+    if (oldest !== undefined) runChannel.delete(oldest);
+  }
+}
+
+/** scheduler:<jobId>:<ts> channels are minted fresh every tick - one-shot, nobody can
+ * ever reply there. Storing turns for them is unbounded growth on a 24/7 daemon. */
+function isDisposableChannel(channel: ChannelId): boolean {
+  return channel.startsWith("scheduler:");
+}
+
 export function rememberTurn(channel: ChannelId, role: "user" | "agent", text: string): void {
+  if (isDisposableChannel(channel)) return;
   const a = recentTurns.get(channel) || [];
   a.push({ role, text: text.slice(0, 500), ts: Date.now() });
   recentTurns.set(channel, a.slice(-8));

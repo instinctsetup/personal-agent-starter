@@ -1,6 +1,7 @@
 /** v2 entry: build UI if needed, start daemon, open the control center. */
 import { buildApp } from "./app.js";
 import { warnIfCloudSynced } from "./onedrive-check.js";
+import { pruneQuotaLedger } from "./quota.js";
 
 const PORT = Number(process.env.PORT || 8787);
 
@@ -12,6 +13,7 @@ const HOST = process.env.HOST || "127.0.0.1";
 await app.listen({ port: PORT, host: HOST });
 console.log(`personal-agent v2 control center: http://${HOST}:${PORT}`);
 warnIfCloudSynced(); // loud startup warning if ./data sits inside a OneDrive/Dropbox-synced path (WAL corruption risk)
+pruneQuotaLedger(); // 7-day retention on the model-call ledger (unbounded growth otherwise)
 const { restoreWatchers } = await import("./watcher.js");
 restoreWatchers(); // resume persisted folder watches
 const { restoreConversationState } = await import("./agent2.js");

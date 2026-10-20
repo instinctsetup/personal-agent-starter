@@ -2,7 +2,8 @@
  *  No new dependencies - everything goes through node:os / node:fs / child_process.
  *  Read-only or non-destructive by design; destructive file tools live behind approval cards. */
 import os from "node:os";
-import { statfsSync } from "node:fs";
+import { statfsSync, writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { execFile } from "node:child_process";
 
 /** PowerShell executables to try, most robust first. The absolute System32 path is
@@ -98,8 +99,16 @@ export async function systemInfo(): Promise<string> {
 /** Read the text clipboard. Empty string when the clipboard holds no text. */
 export async function clipboardRead(): Promise<string> {
   if (process.platform === "win32") {
-    const out = await runPs("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; Get-Clipboard");
-    return out.replace(/\r?\n$/, "");
+    // Round-trip through a UTF-8 temp file: setting [Console]::InputEncoding/OutputEncoding
+    // throws "the handle is invalid" when stdio is piped (always, via execFile), and the
+    // console codepage mangles non-ASCII text either way.
+    const out = join(os.tmpdir(), `pa-clip-read-${Date.now()}.txt`);
+    try {
+      await runPs(`Get-Clipboard -Raw | Out-File -FilePath '${out.replace(/'/g, "''")}' -Encoding utf8 -NoNewline`);
+      return existsSync(out) ? readFileSync(out, "utf8") : "";
+    } finally {
+      try { unlinkSync(out); } catch { /* temp file */ }
+    }
   }
   if (process.platform === "darwin") return run("pbpaste", []);
   return run("xclip", ["-selection", "clipboard", "-o"]);
@@ -110,8 +119,10 @@ export async function clipboardWrite(text: string): Promise<void> {
   if (process.platform === "win32") {
     // "$input | Set-Clipboard" is unreliable in -Command mode (stdin enumeration) and mangles
     // non-ASCII through the console codepage - read the console stream explicitly as UTF-8.
+    const tmp = join(os.tmpdir(), `pa-clip-write-${Date.now()}.txt`);
+    writeFileSync(tmp, text, "utf8");
     try {
-      await runPs("[Console]::InputEncoding = [System.Text.Encoding]::UTF8; Set-Clipboard -Value ([Console]::In.ReadToEnd())", text);
+      await runPs(`Set-Clipboard -Value (Get-Content -Raw -Encoding utf8 -LiteralPath '${tmp.replace(/'/g, "''")}')`);
       return;
     } catch (psErr) {
       // last resort: clip.exe reads stdin too (System32 absolute first; ASCII-safe only)
@@ -121,6 +132,8 @@ export async function clipboardWrite(text: string): Promise<void> {
         try { await run(exe, [], text); return; } catch (e) { clipErrs.push(`${exe}: ${(e as any)?.message || e}`); }
       }
       throw new Error(clipErrs.join(" | "));
+    } finally {
+      try { unlinkSync(tmp); } catch { /* temp file */ }
     }
   }
   if (process.platform === "darwin") {

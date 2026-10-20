@@ -16,6 +16,7 @@ export const DEFAULT_CAPS: Record<string, number> = {
   linkedin_message: 5,
   linkedin_invite: 5,
   cleanup: 1,
+  rename: 20,
 };
 
 export function capOf(action: string): number {

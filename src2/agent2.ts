@@ -138,7 +138,7 @@ import type { ChatMessage } from "../src/providers/types.js";
 import { providerOf, recordAttempt, markWon, quotaToday, formatQuota, setQuotaCap } from "./quota.js";
 import { APP_VERSION } from "./version.js";
 import { saveState, clearState, loadStates } from "./convstate.js";
-import { rememberTurn, recentContext, matchSystemCommand, matchMailQuery, matchFormFlowCommand, parseLinkedinAsk, runChannel, DEFAULT_CHANNEL, type ChannelId } from "./matchers.js";
+import { rememberTurn, rememberRunChannel, recentContext, matchSystemCommand, matchMailQuery, matchFormFlowCommand, parseLinkedinAsk, runChannel, DEFAULT_CHANNEL, type ChannelId } from "./matchers.js";
 export { rememberTurn, recentContext, recentFormsUrl, matchSystemCommand, matchFormFlowCommand, parseLinkedinAsk, DEFAULT_CHANNEL } from "./matchers.js";
 export type { ChannelId } from "./matchers.js";
 
@@ -215,7 +215,7 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
  *  when a local Ollama model is set up, those go to HIS GPU first and only fall back to
  *  the free cloud race when the local model is down or too slow. The router already
  *  prefers local_router_model; this covers the reply itself and memory extraction. */
-export async function chatWithPrivacy(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<string> {
+export async function chatWithPrivacy(runId: string, messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }, quiet = false, maxRacers = RACE_MAX_RACERS): Promise<string> {
   if (localEnabled()) {
     const chatModel = getSetting("local_chat_model");
     if (chatModel) {
@@ -230,7 +230,7 @@ export async function chatWithPrivacy(runId: string, messages: ChatMessage[], op
       }
     }
   }
-  return modelRace(runId, messages, opts);
+  return modelRace(runId, messages, opts, quiet, maxRacers);
 }
 
 /**
@@ -338,7 +338,29 @@ export function normalizeCommand(t: string): string {
 
 /** Conversational pending state is scoped per channel: a Telegram/Slack/scheduler message
  * must never be consumed as the answer to a question the web chat asked (and vice versa). */
-type PendingFacts = { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout> };
+type PendingFacts = { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout>; expires: number };
+
+/** A human only ever answers from the web UI (or a bridge) - a scheduled run's hunt
+ * shortlist / fact question is worthless if nobody can ever reach the disposable
+ * scheduler:<jobId>:<ts> channel it was asked on. When the web channel itself has
+ * nothing pending, fall back to the newest still-valid prompt raised by a scheduled
+ * run, so "apply to 1" after a scheduled "search AI internships" keeps working.
+ * Only the web channel inherits - telegram/slack never inherit each other's or the
+ * scheduler's open questions. */
+function resolvePending<T extends { expires: number }>(
+  map: Map<ChannelId, T>, channel: ChannelId,
+): { channel: ChannelId; value: T } | null {
+  const direct = map.get(channel);
+  if (direct) return { channel, value: direct };
+  if (channel !== DEFAULT_CHANNEL) return null;
+  let best: { channel: ChannelId; value: T } | null = null;
+  for (const [ch, v] of map) {
+    if (!ch.startsWith("scheduler:")) continue;
+    if (Date.now() > v.expires) continue;
+    if (!best || v.expires > best.value.expires) best = { channel: ch, value: v };
+  }
+  return best;
+}
 type PendingHunt = { results: import("./search.js").SearchResult[]; expires: number };
 type PendingClarify = { question: string; original: string; expires: number };
 
@@ -412,7 +434,7 @@ async function runApplyFlow(runId: string, url: string, channel: ChannelId): Pro
           const timer = setTimeout(() => {
             if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); clearState(channel, "facts"); resolve(null); }
           }, 10 * 60 * 1000);
-          pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
+          pendingFactsByChannel.set(channel, { questions: qs, resolve, timer, expires: Date.now() + 10 * 60_000 });
           saveState(channel, "facts", { questions: qs }, Date.now() + 10 * 60_000); // restart-safe: re-asked on boot (the live callback is not)
         });
         if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
@@ -463,7 +485,7 @@ function extractMemories(runId: string, userText: string, agentReply: string) {
     { role: "system" as const, content: 'You extract durable user facts and preferences from a chat exchange. Reply with a strict JSON array (possibly empty) of {"kind":"fact"|"preference","text":"..."}. Keep only things worth remembering next week: name, city, college, skills, preferences, constraints, recurring context. Never secrets, never one-off requests, never guesses. JSON array only.' },
     { role: "user" as const, content: `User said: """${userText.slice(0, 500)}"""\nAssistant replied: """${agentReply.slice(0, 500)}"""` },
   ];
-  chatWithPrivacy(runId, msgs, { maxTokens: 300 }) // local-first: extracted facts are his most private data
+  chatWithPrivacy(runId, msgs, { maxTokens: 300 }, true, 1) // local-first, quiet, single racer: private + best-effort + must not burn 4x quota
     .then((raw) => {
       const m = raw.match(/\[[\s\S]*\]/);
       if (!m) return;
@@ -529,7 +551,7 @@ async function answerMailQuery(runId: string, q: { query: string; latest?: boole
 
 export async function handleUserMessage(text: string, routed = false, channel: ChannelId = DEFAULT_CHANNEL): Promise<void> {
   const runId = newRunId();
-  runChannel.set(runId, channel);
+  rememberRunChannel(runId, channel);
   if (!routed) rememberTurn(channel, "user", text);
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
@@ -540,11 +562,11 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   // (declared below; selection handled before command routing)
 
   // an apply/form flow ON THIS CHANNEL is waiting for missing facts - this message is the answer, not a new command
-  const pendingFacts = pendingFactsByChannel.get(channel);
-  if (pendingFacts) {
-    const p = pendingFacts;
-    pendingFactsByChannel.delete(channel);
-    clearState(channel, "facts");
+  const foundFacts = resolvePending(pendingFactsByChannel, channel);
+  if (foundFacts) {
+    const p = foundFacts.value;
+    pendingFactsByChannel.delete(foundFacts.channel);
+    clearState(foundFacts.channel, "facts");
     clearTimeout(p.timer);
     if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
       p.resolve(null);
@@ -562,17 +584,18 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   }
 
   // a hunt shortlist ON THIS CHANNEL is open - "apply to 1,3" / "apply all" picks from it
-  const pendingHunt = pendingHuntByChannel.get(channel);
-  if (pendingHunt) {
+  const foundHunt = resolvePending(pendingHuntByChannel, channel);
+  if (foundHunt) {
+    const pendingHunt = foundHunt.value;
     if (Date.now() > pendingHunt.expires) {
-      pendingHuntByChannel.delete(channel);
-      clearState(channel, "hunt");
+      pendingHuntByChannel.delete(foundHunt.channel);
+      clearState(foundHunt.channel, "hunt");
     } else {
       const sel = cmd.match(/^(?:apply(?:\s+to)?\s+)?(all|\d+(?:\s*[, ]\s*\d+)*)$/i);
       if (sel) {
         const results = pendingHunt.results;
-        pendingHuntByChannel.delete(channel);
-        clearState(channel, "hunt");
+        pendingHuntByChannel.delete(foundHunt.channel);
+        clearState(foundHunt.channel, "hunt");
         const picks = sel[1].toLowerCase() === "all"
           ? results
           : [...new Set(sel[1].split(/[\s,]+/).filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= results.length).map((n) => results[n - 1]);
@@ -589,16 +612,17 @@ export async function handleUserMessage(text: string, routed = false, channel: C
   }
 
   // an LLM-router clarify question ON THIS CHANNEL is open - this message answers it
-  const pendingClarify = pendingClarifyByChannel.get(channel);
-  if (pendingClarify) {
+  const foundClarify = resolvePending(pendingClarifyByChannel, channel);
+  if (foundClarify) {
+    const pendingClarify = foundClarify.value;
     if (Date.now() > pendingClarify.expires || /^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
-      pendingClarifyByChannel.delete(channel);
-      clearState(channel, "clarify");
+      pendingClarifyByChannel.delete(foundClarify.channel);
+      clearState(foundClarify.channel, "clarify");
       if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) { say(runId, "Cancelled."); return; }
     } else {
       const answered = pendingClarify;
-      pendingClarifyByChannel.delete(channel);
-      clearState(channel, "clarify");
+      pendingClarifyByChannel.delete(foundClarify.channel);
+      clearState(foundClarify.channel, "clarify");
       text = `${answered.original}. Answer to the question "${answered.question}": ${t}`;
     }
   }
@@ -1460,7 +1484,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
               const timer = setTimeout(() => {
                 if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); clearState(channel, "facts"); resolve(null); }
               }, 10 * 60 * 1000);
-              pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
+              pendingFactsByChannel.set(channel, { questions: qs, resolve, timer, expires: Date.now() + 10 * 60_000 });
               saveState(channel, "facts", { questions: qs }, Date.now() + 10 * 60_000);
             });
             if (answers === null) say(runId, "Skipped those - leaving them empty.");
@@ -1615,6 +1639,11 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     const mRename = cmd.match(/^rename files in\s+(.+?)\s+from\s+(.+?)\s+to\s+(.+)$/i);
     if (mRename) {
       const [, dir, find, replace] = mRename;
+      const rcap = checkCap("rename");
+      if (!rcap.allowed) {
+        say(runId, `Daily rename cap reached (${rcap.used}/${rcap.cap}). Say \`cap rename <N>\` to raise it.`);
+        return;
+      }
       try {
         const moves = planRename(dir, find, replace);
         if (!moves.length) { say(runId, `No files in ${dir} contain "${find}" in their name.`); return; }
@@ -1628,6 +1657,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         }
         const approved = (res.payload?.moves ?? moves) as Move[];
         const done = await toolCall(runId, "fs.rename", { count: approved.length }, async () => applyMoves(approved, "rename"));
+        recordAction("rename", dir);
         say(runId, `Renamed ${done.length} file(s). Say \`undo last rename\` to reverse.`);
       } catch (err: any) {
         say(runId, err?.message || "Couldn't rename those files.");
@@ -1673,7 +1703,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         return;
       }
       try {
-        const dir = downloadsDir();
+        const dir = await downloadsDir();
         const moves = planDownloadsCleanup(dir);
         if (!moves.length) { say(runId, "Nothing older than 30 days in Downloads - it's already tidy."); return; }
         const summary = `Archive ${moves.length} file(s) from Downloads into _archive/<month>/:\n${fmtMoves(moves)}\n\nApprove moves them (undo last cleanup reverses it).`;

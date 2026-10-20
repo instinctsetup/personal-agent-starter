@@ -43,8 +43,9 @@ if (isWindows()) {
   // Google blocks sign-in on the bundled automation Chromium; a real installed browser fixes it.
   const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
   const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
-  const edge = existsSync(join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe')) || existsSync(join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'));
-  const chrome = existsSync(join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe')) || existsSync(join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'));
+  const local = process.env['LocalAppData'] || join(process.env['USERPROFILE'] || 'C:\\Users\\Default', 'AppData', 'Local');
+  const edge = [pf86, pf, local].some((b) => existsSync(join(b, 'Microsoft', 'Edge', 'Application', 'msedge.exe')));
+  const chrome = [pf, pf86, local].some((b) => existsSync(join(b, 'Google', 'Chrome', 'Application', 'chrome.exe')));
   ok('real browser for Google sign-in', edge || chrome,
      edge || chrome ? `found: ${[edge && 'Edge', chrome && 'Chrome'].filter(Boolean).join(', ')} - say "use my real browser" in chat` : 'install Edge or Chrome, then say "use my real browser" in chat');
 }

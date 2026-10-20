@@ -2,7 +2,7 @@
  *  file lands. Read-only - any move/rename of the file is a separate approval-gated action.
  *  Watch registrations persist in data/watchers.json and are restored at daemon boot. */
 import { watch, type FSWatcher, existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { emit, newRunId } from "./bus.js";
 import { DATA_DIR } from "./db.js";
 
@@ -25,11 +25,20 @@ function announce(text: string): void {
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "agent", text });
 }
 
+/** NTFS is case-insensitive: "C:\Users\You\Downloads" and "c:\users\you\downloads"
+ * are the same folder - compare normalized so a retyped path can't spawn a duplicate
+ * watcher or leave one un-stoppable. */
+function normalizeDir(dir: string): string {
+  const r = resolve(dir.trim());
+  return process.platform === "win32" ? r.toLowerCase() : r;
+}
+
 export function startWatch(dir: string, ext: string | null = null): WatchSpec {
   if (!existsSync(dir)) throw new Error(`${dir} does not exist.`);
   const normalizedExt = ext ? (ext.startsWith(".") ? ext.toLowerCase() : `.${ext.toLowerCase()}`) : null;
+  const key = normalizeDir(dir);
   for (const a of active.values()) {
-    if (a.spec.dir === dir && a.spec.ext === normalizedExt) return a.spec; // already watching
+    if (normalizeDir(a.spec.dir) === key && a.spec.ext === normalizedExt) return a.spec; // already watching
   }
   const spec: WatchSpec = { id: `watch-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`, dir, ext: normalizedExt };
   // snapshot current contents so only genuinely NEW files announce
@@ -57,8 +66,10 @@ export function startWatch(dir: string, ext: string | null = null): WatchSpec {
 }
 
 export function stopWatch(idOrDir: string): boolean {
+  let key: string | null = null;
+  try { key = normalizeDir(idOrDir); } catch { key = null; }
   for (const [id, a] of active) {
-    if (id === idOrDir || a.spec.dir === idOrDir) {
+    if (id === idOrDir || (key !== null && normalizeDir(a.spec.dir) === key)) {
       for (const t of a.pending.values()) clearTimeout(t);
       a.watcher.close();
       active.delete(id);

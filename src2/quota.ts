@@ -57,6 +57,12 @@ export function setQuotaCap(provider: string, n: number): void {
   setSetting(`quota_cap_${provider}`, String(Math.max(0, Math.floor(n))));
 }
 
+/** 7-day retention: every model-race attempt inserts a row, forever, on a 24/7 daemon.
+ * Sweep stale rows at boot (same place the OneDrive warning runs). */
+export function pruneQuotaLedger(now = Date.now()): void {
+  try { db.prepare("DELETE FROM quota_ledger WHERE ts < ?").run(now - 7 * 24 * 60 * 60 * 1000); } catch { /* best effort */ }
+}
+
 function dayStart(ts = Date.now()): number {
   const d = new Date(ts);
   d.setHours(0, 0, 0, 0);
