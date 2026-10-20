@@ -64,7 +64,7 @@ export const COMMAND_GRAMMAR = `
 
 import type { ChatMessage } from "../src/providers/types.js";
 
-export function routerPrompt(userText: string, memory = ""): ChatMessage[] {
+export function routerPrompt(userText: string, memory = "", history = ""): ChatMessage[] {
   return [
     {
       role: "system",
@@ -79,6 +79,8 @@ export function routerPrompt(userText: string, memory = ""): ChatMessage[] {
         '{"chat": true}  - general conversation, not an action. NEVER chat for questions about the user\'s own mail, files, applications, schedule, laptop/system status, clipboard, notes, model usage, or LinkedIn outreach - those are commands (mail search, laptop status, clipboard, notes, quota, linkedin crm, applications, jobs).',
         "",
         "Rules:",
+        history ? `- Recent conversation (newest last). Short follow-ups like "answer all", "submit", "do it" refer to it - resolve them against it, NEVER ask for what is already there:
+${history}` : "",
         "- Understand any phrasing: fix typos, translate Hinglish, ignore politeness filler.",
         "- NEVER invent email addresses, URLs, company names, or file paths. If one is needed and missing, ask with clarify.",
         "- Keep the user's actual meaning; do not add steps they did not ask for.",
@@ -117,9 +119,9 @@ export function parseModelRoute(raw: string): Route | null {
 type ChatFn = (messages: ChatMessage[]) => Promise<string>;
 
 /** Ask the model race to route one user message. Null = unusable, caller falls back to the regex cascade. */
-export async function routeWithModel(text: string, chat: ChatFn, memory = ""): Promise<Route | null> {
+export async function routeWithModel(text: string, chat: ChatFn, memory = "", history = ""): Promise<Route | null> {
   try {
-    const raw = await chat(routerPrompt(text, memory));
+    const raw = await chat(routerPrompt(text, memory, history));
     return parseModelRoute(raw);
   } catch {
     return null; // model trouble must never block the user's words

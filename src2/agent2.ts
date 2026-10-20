@@ -48,6 +48,8 @@ function provider() {
 }
 
 function say(runId: string, text: string, extra: Partial<AgentEvent> = {}) {
+  const ch = runChannel.get(runId);
+  if (ch) rememberTurn(ch, "agent", text);
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "agent", text, ...extra });
 }
 
@@ -353,6 +355,47 @@ export function restoreConversationState(sayFn: (text: string) => void): number 
 }
 
 
+/** Recent turns per channel, so the router and the deterministic follow-up matcher can resolve
+ *  "answer all", "submit", "it is in the form" against what was JUST said - the circular
+ *  "which form? - the one I pasted - which form?" bug was this buffer not existing. */
+const recentTurns = new Map<ChannelId, { role: "user" | "agent"; text: string; ts: number }[]>();
+const runChannel = new Map<string, ChannelId>();
+
+export function rememberTurn(channel: ChannelId, role: "user" | "agent", text: string): void {
+  const a = recentTurns.get(channel) || [];
+  a.push({ role, text: text.slice(0, 500), ts: Date.now() });
+  recentTurns.set(channel, a.slice(-8));
+}
+
+/** Last few turns of this channel as prompt context ("user: ... / you: ..."). */
+export function recentContext(channel: ChannelId, max = 6): string {
+  const a = (recentTurns.get(channel) || []).slice(-max);
+  return a.map((t) => `${t.role === "user" ? "User" : "You"}: ${t.text}`).join("\n");
+}
+
+const FORMS_URL_RE = /https?:\/\/\S*(?:docs\.google\.com\/forms|forms\.gle)\S*/i;
+
+/** The most recent Google-Forms URL mentioned on this channel, newest turn first. */
+export function recentFormsUrl(channel: ChannelId): string | null {
+  for (const t of [...(recentTurns.get(channel) || [])].reverse()) {
+    const m = t.text.match(FORMS_URL_RE);
+    if (m) return m[0].replace(/[.,:;!)]+$/, "");
+  }
+  return null;
+}
+
+/** Deterministic form-flow routing. A pasted Google-Forms URL IS the command; short action
+ *  follow-ups resolve against the last form URL on the channel. Returns the canonical command. */
+export function matchFormFlowCommand(cmd: string, channel: ChannelId = DEFAULT_CHANNEL): string | null {
+  const url = cmd.match(FORMS_URL_RE)?.[0]?.replace(/[.,:;!)]+$/, "");
+  if (url) return `fill form ${url}`;
+  if (/^(?:answer (?:all|them|all the questions?|everything)|submit|fill it|fill (?:the|this|out)(?: form)?|do it|go ahead|yes(?: submit)?|it is in the form|it'?s in the form|answer all and submit|open it)[.!? ]*$/i.test(cmd.trim())) {
+    const recent = recentFormsUrl(channel);
+    if (recent) return `fill form ${recent}`;
+  }
+  return null;
+}
+
 /** Parse "linkedin message <profile-url>: <text>" / "message <url> on linkedin saying ..." / "connect with <url> on linkedin note: ...". */
 export function parseLinkedinAsk(cmd: string): { kind: "message" | "invite"; url: string; text: string } | null {
   const url = cmd.match(/https?:\/\/[\w.]*linkedin\.com\/[^\s]+/i)?.[0]?.replace(/[.,:;!)]+$/, "");
@@ -559,6 +602,8 @@ async function answerMailQuery(runId: string, q: { query: string; latest?: boole
 
 export async function handleUserMessage(text: string, routed = false, channel: ChannelId = DEFAULT_CHANNEL): Promise<void> {
   const runId = newRunId();
+  runChannel.set(runId, channel);
+  if (!routed) rememberTurn(channel, "user", text);
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
   const cmd = normalizeCommand(t);
@@ -692,6 +737,8 @@ export async function handleUserMessage(text: string, routed = false, channel: C
       if (mq) { await answerMailQuery(runId, mq); return; }
       const sc = matchSystemCommand(cmd);
       if (sc) { await handleUserMessage(sc, true, channel); return; }
+      const fc = matchFormFlowCommand(cmd, channel);
+      if (fc) { await handleUserMessage(fc, true, channel); return; }
     }
 
     if (!routed && !provider().offline) {
@@ -702,7 +749,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
           catch { /* local router down/slow - the cloud race takes it */ }
         }
         return modelRace(runId, msgs, undefined, true);
-      }, Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
+      }, Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext(), recentContext(channel));
       if (route && route.kind === "clarify") {
         pendingClarifyByChannel.set(channel, { question: route.question, original: t, expires: Date.now() + 10 * 60_000 });
         saveState(channel, "clarify", { question: route.question, original: t }, Date.now() + 10 * 60_000);
@@ -720,10 +767,17 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         return;
       }
       if (route && route.kind === "chat") {
-        // the model explicitly said conversation: skip the cascade, answer freely (capabilities + memory in context)
+        // the model explicitly said conversation: skip the cascade, answer freely (capabilities + memory + recent turns in context)
         const cap = await capabilityContext();
         const mem = memoryContext();
-        const sys = [cap, mem].filter(Boolean).join("\n\n");
+        const history = recentContext(channel);
+        const rules = [
+          "Conversation rules:",
+          "- You can see the recent conversation below. NEVER ask for something the user already gave you there (a link, a name, an answer).",
+          "- NEVER invent capabilities you do not have. If you cannot do what they ask, say what you CAN do and the exact next step - one sentence, no circular questions.",
+          history ? `- Recent conversation (newest last):\n${history}` : "",
+        ].filter(Boolean).join("\n");
+        const sys = [cap, mem, rules].filter(Boolean).join("\n\n");
         const chatMsgs = [{ role: "system" as const, content: sys }, { role: "user" as const, content: t }];
         const reply = await toolCall(runId, "model.chat", { text: t }, async () => withProgress(runId, "Waiting for the model", () => modelRace(runId, chatMsgs)));
         const out = reply && reply.trim() ? reply : "The model returned an empty reply. Please try again.";
@@ -1456,15 +1510,16 @@ export async function handleUserMessage(text: string, routed = false, channel: C
 
     // ---- signup engine -------------------------------------------------
     // ---- form filling: read questions -> profile/memory answers -> ask unknowns -> review -> submit ----
-    const mForm = cmd.match(/^fill (?:the |this |out )?form\s+(\S+)$/i) || cmd.match(/^fill\s+(https?:\/\/\S*(?:forms\.gle|docs\.google\.com\/forms)\S*)$/i);
+    const mForm = cmd.match(/^fill (?:the |this |out )?form\s+(\S+?)(\s+anyway)?$/i) || cmd.match(/^fill\s+(https?:\/\/\S*(?:forms\.gle|docs\.google\.com\/forms)\S*?)(\s+anyway)?$/i);
     if (mForm) {
       const url = mForm[1];
+      const allowQuiz = !!mForm[2];
       say(runId, `Opening the form - I'll read every question, answer what I truly know from your profile and memory, and ask you for the rest. Watch the Browser tab if you like.`);
       const result = await toolCall(runId, "form.fill", { url }, async () => {
         const { runFormFill } = await import("./forms.js");
         const { ProfileStore } = await import("../src/tools/profile.js");
         const profile = new ProfileStore(DATA_DIR).get() as any;
-        return runFormFill({ url, profile, resumePath: profile.resumePath || undefined }, {
+        return runFormFill({ url, profile, resumePath: profile.resumePath || undefined, allowQuiz }, {
           say: (text) => say(runId, text),
           askFacts: async (qs) => {
             if (pendingFactsByChannel.has(channel)) return {};
@@ -1507,7 +1562,9 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "form.fill", text: `form not submitted (${result.status})` });
         say(runId, result.status === "cancelled"
           ? "Cancelled - the form stays filled in the Browser tab, nothing was submitted."
-          : `Couldn't finish (${result.status}). ${result.error || ""}`);
+          : result.status === "quiz_check"
+            ? (result.error || "This looks like a graded quiz - I need your go-ahead first.")
+            : `Couldn't finish (${result.status}). ${result.error || ""}`);
       }
       return;
     }

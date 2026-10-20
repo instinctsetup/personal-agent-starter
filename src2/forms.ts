@@ -14,7 +14,7 @@ export type FormQuestion = {
 };
 
 export type FillResult = {
-  status: "submitted" | "cancelled" | "blocked" | "failed";
+  status: "submitted" | "cancelled" | "blocked" | "failed" | "quiz_check";
   pages: number;
   answered: Record<string, string>;
   unknowns: string[];
@@ -242,7 +242,7 @@ async function fillQuestion(page: any, q: FormQuestion, answer: string): Promise
 
 const CONFIRM_RE = /response has been recorded|thank you|thanks for (your|filling)|submission (received|complete)|form submitted|submitted successfully/i;
 
-export async function runFormFill(opts: { url: string; profile: Record<string, any>; resumePath?: string }, hooks: FormHooks): Promise<FillResult> {
+export async function runFormFill(opts: { url: string; profile: Record<string, any>; resumePath?: string; allowQuiz?: boolean }, hooks: FormHooks): Promise<FillResult> {
   const answered: Record<string, string> = {};
   const sources: Record<string, string> = {};
   const unknowns: string[] = [];
@@ -256,6 +256,26 @@ export async function runFormFill(opts: { url: string; profile: Record<string, a
     for (let guard = 0; guard < 10; guard++) {
       const { questions, hasNext, hasSubmit } = await page.evaluate(EXTRACT_JS) as { questions: FormQuestion[]; hasNext: boolean; hasSubmit: boolean };
       if (!questions.length) return { status: "failed", pages, answered, unknowns, error: "No questions found on this page - it may not be a form, or it is behind a login." };
+
+      // Graded-assessment guard (standing rule): never take a quiz/exam AS him. Detect point badges /
+      // quiz titling on page one, show the questions, and make HIM say "fill form <url> anyway" first.
+      if (pages === 1 && !opts.allowQuiz) {
+        const markers = await page.evaluate(() => {
+          const text = (document.body && document.body.innerText) || "";
+          return {
+            points: (text.match(/\b\d+\s+points?\b/gi) || []).length,
+            titled: /quiz|exam|test|assessment/i.test(document.title || ""),
+          };
+        });
+        if (markers.points >= 2 || (markers.titled && markers.points >= 1)) {
+          return {
+            status: "quiz_check", pages, answered, unknowns,
+            error: `This looks like a graded quiz or exam (${questions.length} questions, points attached):\n` +
+              questions.map((q, i) => `${i + 1}. ${q.label}`).join("\n") +
+              "\n\nYour standing rule: I don't take graded assessments as you. If this one is practice / not graded, say `fill form " + opts.url + " anyway` and I'll work through it with you.",
+          };
+        }
+      }
 
       // map answers: profile facts + memory first, then ask the user for the rest
       const toAsk: string[] = [];

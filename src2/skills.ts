@@ -99,3 +99,22 @@ registerTool({ name: "git.init", description: "git init a repo", args: { name: {
 registerTool({ name: "git.commit", description: "git commit a path", args: { path: { type: "string", required: true }, message: { type: "string" } }, risk: "write" });
 registerTool({ name: "git.push", description: "git push a path", args: { path: { type: "string", required: true }, remote: { type: "string" }, branch: { type: "string" } }, risk: "write" });
 registerTool({ name: "scheduler.add", description: "Schedule a recurring or one-time command", args: { command: { type: "string", required: true, description: "e.g. 'every 2 hours search AI internships' or 'at 18:30 tracker'" } }, risk: "write" });
+// Level-up tools (winops, fileops, OCR, triage, CRM): registered so `skills` shows
+// the real surface and gateTool validates/caps them like the originals.
+registerTool({ name: "system.info", description: "Laptop snapshot: battery, RAM, disk free, CPU, uptime", args: {}, risk: "read" });
+registerTool({ name: "clipboard.read", description: "Read the text clipboard", args: {}, risk: "read" });
+registerTool({ name: "clipboard.write", description: "Copy text to the clipboard", args: { length: { type: "string", description: "character count" } }, risk: "write" });
+registerTool({ name: "app.launch", description: "Launch an allow-listed app (notepad, calculator, chrome...) - never an arbitrary exe", args: { app: { type: "string", required: true } }, risk: "write" });
+registerTool({ name: "fs.rename", description: "Batch-rename files in a folder (approval card + undo)", args: {}, risk: "write" });
+registerTool({ name: "fs.cleanup", description: "Archive old downloads into _archive/<month>/ (approval card, daily cap, undo)", args: {}, risk: "write", capAction: "cleanup" });
+registerTool({ name: "fs.undo_rename", description: "Reverse the most recent rename batch", args: {}, risk: "write" });
+registerTool({ name: "fs.undo_cleanup", description: "Reverse the most recent cleanup batch", args: {}, risk: "write" });
+registerTool({ name: "fs.undo_entry", description: "Reverse one specific file operation by ledger timestamp", args: { ts: { type: "string", required: true } }, risk: "write" });
+registerTool({ name: "drive.sync", description: "Sync a local folder to Drive", args: { path: { type: "string", required: true } }, risk: "write" });
+registerTool({ name: "github.create_repo", description: "Create a GitHub repo via the connected account", args: { name: { type: "string", required: true } }, risk: "write" });
+registerTool({ name: "image.ocr", description: "Extract text from an image file (local OCR)", args: { path: { type: "string", required: true } }, risk: "read" });
+registerTool({ name: "screen.ocr", description: "Screenshot the screen and extract its text (local OCR)", args: {}, risk: "read" });
+registerTool({ name: "linkedin.feed", description: "Read the LinkedIn feed via the logged-in session", args: {}, risk: "read" });
+registerTool({ name: "mail.triage", description: "Classify recent inbox: what actually needs a reply", args: {}, risk: "read" });
+registerTool({ name: "vault.list", description: "List vault entry names (never values)", args: {}, risk: "read" });
+
