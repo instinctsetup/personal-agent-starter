@@ -296,12 +296,25 @@ export function normalizeCommand(t: string): string {
   return s.trim();
 }
 
-/** One pending "the form needs these facts" question set from the applier; the next chat message answers it. */
-let pendingFacts: { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout> } | null = null;
+/** Conversational pending state is scoped per channel: a Telegram/Slack/scheduler message
+ * must never be consumed as the answer to a question the web chat asked (and vice versa). */
+export type ChannelId = string;
+export const DEFAULT_CHANNEL: ChannelId = "web";
 
-/** A hunt shortlist: the next "apply to 1,3" / "apply all" picks from it (15 min expiry). */
-let pendingHunt: { results: import("./search.js").SearchResult[]; expires: number } | null = null;
-let pendingClarify: { question: string; original: string; expires: number } | null = null;
+type PendingFacts = { questions: string[]; resolve: (a: Record<string, string> | null) => void; timer: ReturnType<typeof setTimeout> };
+type PendingHunt = { results: import("./search.js").SearchResult[]; expires: number };
+type PendingClarify = { question: string; original: string; expires: number };
+
+/** One pending "the form needs these facts" question set per channel; the next message ON THAT CHANNEL answers it. */
+const pendingFactsByChannel = new Map<ChannelId, PendingFacts>();
+const pendingHuntByChannel = new Map<ChannelId, PendingHunt>();
+const pendingClarifyByChannel = new Map<ChannelId, PendingClarify>();
+
+/** Scheduler-triggered commands get their own disposable channel per job run, so they can
+ * never answer (or be answered by) a human's in-flight conversation on another channel. */
+export function schedulerChannel(jobId: string | number): ChannelId {
+  return `scheduler:${jobId}:${Date.now()}`;
+}
 
 
 /** Parse "linkedin message <profile-url>: <text>" / "message <url> on linkedin saying ..." / "connect with <url> on linkedin note: ...". */
@@ -328,7 +341,7 @@ async function linkedinTools() {
 }
 
 /** The apply flow for one posting: fill profile facts, ask missing ones in chat, approval card before submit. */
-async function runApplyFlow(runId: string, url: string): Promise<void> {
+async function runApplyFlow(runId: string, url: string, channel: ChannelId): Promise<void> {
   const cap = checkCap("apply");
   if (!cap.allowed) {
     emit({ ts: Date.now(), run_id: runId, kind: "status", state: "denied", label: "apply", text: "apply denied: daily cap reached" });
@@ -342,7 +355,7 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
     const profile = new ProfileStore(DATA_DIR).get();
     return runJobApplication({ url, profile, headless: true, dataDir: DATA_DIR }, {
       askFacts: async (qs: string[]) => {
-        if (pendingFacts) return {}; // another apply is already asking - do not stack questions
+        if (pendingFactsByChannel.has(channel)) return {}; // this channel already has a question open - do not stack
         say(runId, [
           `The form needs ${qs.length} fact(s) I don't have:`,
           ...qs.map((q, i) => `${i + 1}. ${q}`),
@@ -351,9 +364,9 @@ async function runApplyFlow(runId: string, url: string): Promise<void> {
         ].join("\n"));
         const answers = await new Promise<Record<string, string> | null>((resolve) => {
           const timer = setTimeout(() => {
-            if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
+            if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); resolve(null); }
           }, 10 * 60 * 1000);
-          pendingFacts = { questions: qs, resolve, timer };
+          pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
         });
         if (answers === null) say(runId, "Skipped those - leaving the unknown fields empty.");
         return answers ?? {};
@@ -468,7 +481,7 @@ async function answerMailQuery(runId: string, q: { query: string; latest?: boole
   ].join("\n"), { results: matches });
 }
 
-export async function handleUserMessage(text: string, routed = false): Promise<void> {
+export async function handleUserMessage(text: string, routed = false, channel: ChannelId = DEFAULT_CHANNEL): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
@@ -478,10 +491,11 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
   /** A hunt shortlist waiting for the user's picks. */
   // (declared below; selection handled before command routing)
 
-  // an apply flow is waiting for missing facts - this message is the answer, not a new command
+  // an apply/form flow ON THIS CHANNEL is waiting for missing facts - this message is the answer, not a new command
+  const pendingFacts = pendingFactsByChannel.get(channel);
   if (pendingFacts) {
     const p = pendingFacts;
-    pendingFacts = null;
+    pendingFactsByChannel.delete(channel);
     clearTimeout(p.timer);
     if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
       p.resolve(null);
@@ -498,15 +512,16 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     return;
   }
 
-  // a hunt shortlist is open - "apply to 1,3" / "apply all" picks from it
+  // a hunt shortlist ON THIS CHANNEL is open - "apply to 1,3" / "apply all" picks from it
+  const pendingHunt = pendingHuntByChannel.get(channel);
   if (pendingHunt) {
     if (Date.now() > pendingHunt.expires) {
-      pendingHunt = null;
+      pendingHuntByChannel.delete(channel);
     } else {
       const sel = cmd.match(/^(?:apply(?:\s+to)?\s+)?(all|\d+(?:\s*[, ]\s*\d+)*)$/i);
       if (sel) {
         const results = pendingHunt.results;
-        pendingHunt = null;
+        pendingHuntByChannel.delete(channel);
         const picks = sel[1].toLowerCase() === "all"
           ? results
           : [...new Set(sel[1].split(/[\s,]+/).filter(Boolean).map(Number))].filter((n) => n >= 1 && n <= results.length).map((n) => results[n - 1]);
@@ -515,21 +530,22 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
           return;
         }
         say(runId, `Applying to ${picks.length} posting(s), one at a time. Each still needs your approval before anything is submitted.`);
-        for (const r of picks) await runApplyFlow(runId, r.url);
+        for (const r of picks) await runApplyFlow(runId, r.url, channel);
         return;
       }
       // not a selection: keep the shortlist open and route normally
     }
   }
 
-  // an LLM-router clarify question is open - this message answers it
+  // an LLM-router clarify question ON THIS CHANNEL is open - this message answers it
+  const pendingClarify = pendingClarifyByChannel.get(channel);
   if (pendingClarify) {
     if (Date.now() > pendingClarify.expires || /^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) {
-      pendingClarify = null;
+      pendingClarifyByChannel.delete(channel);
       if (/^(skip|cancel|never\s?mind|stop)$/i.test(cmd)) { say(runId, "Cancelled."); return; }
     } else {
       const answered = pendingClarify;
-      pendingClarify = null;
+      pendingClarifyByChannel.delete(channel);
       text = `${answered.original}. Answer to the question "${answered.question}": ${t}`;
     }
   }
@@ -544,7 +560,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         if (e.kind === "status" && (e as any).state === "denied") { denied = true; fails.push(String(e.text || "denied")); }
       });
       try {
-        await handleUserMessage(cmd, true);
+        await handleUserMessage(cmd, true, channel);
       } catch (e: any) {
         off();
         return { ok: false, error: String(e?.message || e) };
@@ -605,13 +621,13 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return modelRace(runId, msgs, undefined, true);
       }, Math.min(15_000, CHAT_DEADLINE_MS)), memoryContext());
       if (route && route.kind === "clarify") {
-        pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
+        pendingClarifyByChannel.set(channel, { question: route.question, original: t, expires: Date.now() + 10 * 60_000 });
         say(runId, route.question);
         return;
       }
       if (route && route.kind === "commands" && route.commands.length) {
         if (route.commands.length === 1) {
-          await handleUserMessage(route.commands[0], true);
+          await handleUserMessage(route.commands[0], true, channel);
           return;
         }
         // multi-step: durable plan with checkpoints, retries and self-correction (same machinery as "plan <goal>")
@@ -700,7 +716,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       for (const r of results) {
         if (!tracked.has(r.url)) addApplication({ company: host(r.url), role: r.title.slice(0, 80), portal: host(r.url), url: r.url, status: "Scouted" });
       }
-      pendingHunt = { results, expires: Date.now() + 15 * 60_000 };
+      pendingHuntByChannel.set(channel, { results, expires: Date.now() + 15 * 60_000 });
       say(runId, [
         `Top ${results.length} hits for "${q}":`,
         ...results.map((r, i) => `${i + 1}. ${r.title}\n   ${r.url}${tracked.has(r.url) ? " (already tracked)" : ""}\n   ${r.snippet}`),
@@ -728,7 +744,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       if (provider().offline) { say(runId, "Planning needs a connected model - say `connect groq` or `connect gemini` first (both free)."); return; }
       const route = await routeWithModel(goal, (msgs) => withProgress(runId, "Planning the steps", () => modelRace(runId, msgs, undefined, true), Math.min(15_000, CHAT_DEADLINE_MS)));
       if (route && route.kind === "clarify") {
-        pendingClarify = { question: route.question, original: t, expires: Date.now() + 10 * 60_000 };
+        pendingClarifyByChannel.set(channel, { question: route.question, original: t, expires: Date.now() + 10 * 60_000 });
         say(runId, route.question);
         return;
       }
@@ -1131,7 +1147,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     // ---- universal job applier ------------------------------------------
     const mApply = cmd.match(/^apply (?:to|for)(?: this job| this one| here)? (\S+)$/i);
     if (mApply) {
-      await runApplyFlow(runId, mApply[1]);
+      await runApplyFlow(runId, mApply[1], channel);
       return;
     }
 
@@ -1235,7 +1251,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         return runFormFill({ url, profile, resumePath: profile.resumePath || undefined }, {
           say: (text) => say(runId, text),
           askFacts: async (qs) => {
-            if (pendingFacts) return {};
+            if (pendingFactsByChannel.has(channel)) return {};
             say(runId, [
               ...qs.map((q, i) => `${i + 1}. ${q}`),
               "",
@@ -1243,9 +1259,9 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
             ].join("\n"));
             const answers = await new Promise<Record<string, string> | null>((resolve) => {
               const timer = setTimeout(() => {
-                if (pendingFacts?.resolve === resolve) { pendingFacts = null; resolve(null); }
+                if (pendingFactsByChannel.get(channel)?.resolve === resolve) { pendingFactsByChannel.delete(channel); resolve(null); }
               }, 10 * 60 * 1000);
-              pendingFacts = { questions: qs, resolve, timer };
+              pendingFactsByChannel.set(channel, { questions: qs, resolve, timer });
             });
             if (answers === null) say(runId, "Skipped those - leaving them empty.");
             return answers ?? {};

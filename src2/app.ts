@@ -80,7 +80,7 @@ export async function buildApp() {
   app.post("/api/chat", async (req) => {
     const { text } = req.body as { text: string };
     if (!text?.trim()) return { error: "empty message" };
-    void handleUserMessage(text.trim()); // events stream over WS
+    void handleUserMessage(text.trim(), false, "web"); // events stream over WS
     return { ok: true };
   });
 

@@ -6,8 +6,8 @@ const PORT = Number(process.env.PORT || 8787);
 
 const app = await buildApp();
 const { startScheduler } = await import("./scheduler.js");
-const { handleUserMessage } = await import("./agent2.js");
-startScheduler(async (cmd) => handleUserMessage(cmd));
+const { handleUserMessage, schedulerChannel } = await import("./agent2.js");
+startScheduler(async (cmd) => handleUserMessage(cmd, false, schedulerChannel("tick")));
 const HOST = process.env.HOST || "127.0.0.1";
 await app.listen({ port: PORT, host: HOST });
 console.log(`personal-agent v2 control center: http://${HOST}:${PORT}`);

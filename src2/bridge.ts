@@ -70,7 +70,7 @@ export async function startTelegramBridge(pollMs = 3000): Promise<boolean> {
           if (!msg?.text || msg.from?.is_bot) continue;
           const chatId = String(msg.chat.id);
           activeTargets.add({ kind: "telegram", chat: chatId });
-          void handleUserMessage(msg.text);
+          void handleUserMessage(msg.text, false, `telegram:${chatId}`);
         }
       } catch { /* network hiccup */ }
       await new Promise((r) => setTimeout(r, pollMs));
@@ -96,7 +96,7 @@ export function handleSlackEvent(payload: any): { challenge?: string; ok?: boole
   if (ev?.type === "message" && ev.text && !ev.bot_id && !ev.subtype) {
     activeTargets.add({ kind: "slack", chat: ev.channel });
     startBridgeFanout();
-    void handleUserMessage(ev.text);
+    void handleUserMessage(ev.text, false, `slack:${ev.channel}`);
   }
   return { ok: true };
 }

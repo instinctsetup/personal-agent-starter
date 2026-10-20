@@ -55,7 +55,7 @@ function runChatFlow(text: string): Promise<string> {
     });
     try {
       const { handleUserMessage } = await import("./agent2.js");
-      await handleUserMessage(text);
+      await handleUserMessage(text, false, "mcp");
     } finally {
       off();
     }
