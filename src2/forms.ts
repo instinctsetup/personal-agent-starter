@@ -64,10 +64,30 @@ const EXTRACT_JS = `(() => {
     const groups = new Map();
     const fields = [...document.querySelectorAll("input, textarea, select")].filter(vis).filter((el) => !["hidden", "submit", "button", "image", "reset", "password"].includes((el.getAttribute("type") || "").toLowerCase()));
     let n = 0;
+    const humanize = (s) => (s || "")
+      .replace(/[\]\[].*$/, "")
+      .replace(/^formField[-_.]/i, "")
+      .replace(/[-_.](input|field|text|textarea|select|label)$/i, "")
+      .replace(/^[a-z_]*app(lication)?[_.\[\-]*/i, "")
+      .replace(/[_.\-]+/g, " ")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .replace(/\s+/g, " ").trim();
     const labelOf = (el) => {
-      if (el.id) { const l = document.querySelector('label[for="' + el.id + '"]'); if (l) return txt(l); }
-      const wrap = el.closest("label"); if (wrap) return txt(wrap);
-      return (el.getAttribute("aria-label") || el.getAttribute("placeholder") || el.getAttribute("name") || "field").trim();
+      if (el.id) { const l = document.querySelector('label[for="' + el.id + '"]'); if (l && txt(l)) return txt(l); }
+      const wrap = el.closest("label"); if (wrap && txt(wrap)) return txt(wrap);
+      const labelledby = el.getAttribute("aria-labelledby");
+      if (labelledby) { const l = document.getElementById(labelledby.split(" ")[0]); if (l && txt(l)) return txt(l); }
+      // ATS containers (Workday data-automation-id, Greenhouse .field, Lever .application-question):
+      // the visible label lives in a sibling label/div inside the same wrapper
+      // closest() would match the input itself when it carries data-automation-id - start from the parent
+      const box = el.parentElement ? el.parentElement.closest('[data-automation-id], .application-question, .field, .form-group, li, .application-field') : null;
+      if (box) {
+        const l = box.querySelector('label, [data-automation-id$="label" i], legend');
+        if (l && txt(l) && l !== el) return txt(l);
+      }
+      const aria = (el.getAttribute("aria-label") || el.getAttribute("placeholder") || "").trim();
+      if (aria) return aria;
+      return humanize(el.getAttribute("data-automation-id") || el.getAttribute("name")) || "field";
     };
     for (const el of fields) {
       const type = (el.getAttribute("type") || "text").toLowerCase();
@@ -90,11 +110,14 @@ const EXTRACT_JS = `(() => {
   }
   const buttons = [...document.querySelectorAll('div[role="button"], button, input[type="submit"]')].filter(vis);
   const btext = (b) => (b.innerText || b.value || "").trim().toLowerCase();
-  const hasNext = buttons.some((b) => /^(next|continue)$/i.test(btext(b)));
-  const hasSubmit = buttons.some((b) => /^(submit|send|submit form)$/i.test(btext(b)));
-  for (const b of buttons) { if (/^(next|continue)$/i.test(btext(b))) b.setAttribute("data-pa-next", "1"); if (/^(submit|send|submit form)$/i.test(btext(b))) b.setAttribute("data-pa-submit", "1"); }
+  const hasNext = buttons.some((b) => /^(next|continue|save and continue)$/i.test(btext(b)));
+  const hasSubmit = buttons.some((b) => /^(submit|send|submit form|submit application|apply)$/i.test(btext(b)));
+  for (const b of buttons) { if (/^(next|continue|save and continue)$/i.test(btext(b))) b.setAttribute("data-pa-next", "1"); if (/^(submit|send|submit form|submit application|apply)$/i.test(btext(b))) b.setAttribute("data-pa-submit", "1"); }
   return { questions: qs, hasNext, hasSubmit };
 })()`;
+
+/** Test seam: the page-side extractor, injected by tests via page.evaluate. */
+export const extractForTests = EXTRACT_JS;
 
 /** Profile/memory facts -> an answer for a question label. Empty string = unknown. */
 const FACT_MAP: [RegExp, string][] = [
