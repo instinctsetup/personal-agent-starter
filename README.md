@@ -86,6 +86,15 @@ git init <name>  /  commit <path> [msg]  /  push <path>  /  create github repo <
 every 2 hours search AI internships   /  at 18:30 tracker  /  jobs
 linkedin  /  linkedin on  /  i accept the linkedin risk  /  linkedin feed
 linkedin message <profile-url>: <text>   # approval-gated, daily-capped
+laptop status                         # RAM, CPU, disk free, uptime, battery
+what's on my clipboard  /  copy <text>
+open <app>                            # allow-listed apps only (chrome, vscode, notepad, ...)
+rename files in <dir> from X to Y     # approval card, then rename; undo last rename
+clean up my downloads                 # archives 30d+ old files to _archive/<month>/; approval card; undo last cleanup
+watch <folder> [for new pdf]  /  watching  /  unwatch <folder>
+note: <text>  /  notes                # quick timestamped notes
+remind me at 5pm to <text>  /  remind me in 30 minutes to <text>
+routine <name> = <cmd> + <cmd>  /  routines  /  run <name>  /  delete routine <name>
 vault  /  help
 ```
 
@@ -218,8 +227,9 @@ that wait IS the approval gate.
 ## Tests
 
 ```bash
-npm test    # 204 tests: v1 core + v2 (vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail/providers)
+npm test    # 247 tests: v1 core + v2 (vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail/providers)
             # + v3 (LLM router, boards, plans, caps, memory, local models, skill registry, tracing, help audit, MCP server)
+            # + v4 (channel-scoped state, winops, notes/reminders, file ops + undo ledger, folder watcher, routines)
 ```
 
 ## v1 (tag `v1.0`)
