@@ -21,6 +21,7 @@ import { routeWithModel } from "./router.js";
 import { systemInfo, clipboardRead, clipboardWrite, launchApp, isKnownApp } from "./winops.js";
 import { planRename, planDownloadsCleanup, applyMoves, undoLast, downloadsDir, fmtMoves, type Move } from "./fileops.js";
 import { startWatch, stopWatch, listWatchers } from "./watcher.js";
+import { setRoutine, getRoutine, listRoutines, deleteRoutine } from "./routines.js";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -689,6 +690,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- rename files in <dir> from <text> to <text> - batch rename with an approval card + undo last rename",
         "- clean up my downloads - archives files older than 30 days into _archive/<month>/ (approval card shows every move; daily-capped; undo last cleanup)",
         "- watch <folder> [for new <ext>] / watching / unwatch <folder> - get pinged the moment a new file lands (survives restarts)",
+        "- routine <name> = <cmd> + <cmd> + ... / routines / run <name> / delete routine <name> - one phrase replays your whole checklist (schedule it: at 08:00 run morning)",
       ].join("\n"));
       return;
     }
@@ -1532,6 +1534,40 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     const mUnwatch = cmd.match(/^unwatch\s+(.+)$/i);
     if (mUnwatch) {
       say(runId, stopWatch(mUnwatch[1].trim()) ? "Stopped watching that folder." : "I wasn't watching that. Say `watching` to see the list.");
+      return;
+    }
+
+    // ---- named routines -----------------------------------------------------
+    const mRoutineDef = cmd.match(/^routine\s+([\w][\w -]{0,40})\s*=\s*([\s\S]+)$/i);
+    if (mRoutineDef) {
+      try {
+        const r = setRoutine(mRoutineDef[1], mRoutineDef[2].split(/\s*\+\s*|\s*;\s*/).filter(Boolean));
+        say(runId, `Routine "${r.name}" saved with ${r.steps.length} step(s):\n` + r.steps.map((s, i) => `${i + 1}. ${s}`).join("\n") + `\n\nSay \`run ${r.name}\` any time, or schedule it: \`at 08:00 run ${r.name}\`.`);
+      } catch (err: any) {
+        say(runId, err?.message || "Couldn't save that routine.");
+      }
+      return;
+    }
+    if (/^routines$/i.test(cmd)) {
+      const rs = listRoutines();
+      say(runId, rs.length
+        ? "Your routines:\n" + rs.map((r) => `- ${r.name}: ${r.steps.join(" + ")}`).join("\n")
+        : "No routines yet. Try `routine morning = check mail + hunt AI internships + laptop status`.");
+      return;
+    }
+    const mRoutineDel = cmd.match(/^delete routine\s+([\w][\w -]{0,40})$/i);
+    if (mRoutineDel) {
+      say(runId, deleteRoutine(mRoutineDel[1]) ? `Routine "${mRoutineDel[1].trim().toLowerCase()}" deleted.` : "No routine by that name. Say `routines` to see them.");
+      return;
+    }
+    const mRoutineRun = cmd.match(/^run\s+([\w][\w -]{0,40})$/i);
+    if (mRoutineRun && getRoutine(mRoutineRun[1])) {
+      const r = getRoutine(mRoutineRun[1])!;
+      say(runId, `Running routine "${r.name}" - ${r.steps.length} step(s), one at a time. Anything that needs approval still shows its own card.`);
+      for (const step of r.steps) {
+        await handleUserMessage(step, true, channel);
+      }
+      say(runId, `Routine "${r.name}" finished.`);
       return;
     }
 
