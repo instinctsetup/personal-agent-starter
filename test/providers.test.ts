@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { MockProvider } from '../src/providers/mock.js';
 import { OpenAiCompatibleProvider } from '../src/providers/openai.js';
+import { GeminiProvider } from '../src/providers/gemini.js';
 
 test('mock provider is offline and deterministic', async () => {
   const p = new MockProvider();
@@ -51,5 +52,47 @@ test('openai-compatible provider surfaces HTTP errors', async () => {
   const port = (server.address() as { port: number }).port;
   const p = new OpenAiCompatibleProvider(`http://127.0.0.1:${port}/v1`, 'm', 'k');
   await assert.rejects(() => p.chat([{ role: 'user', content: 'x' }]), /401/);
+  server.close();
+});
+
+test('gemini provider calls generateContent and parses candidates', async () => {
+  const server = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => (body += c));
+    req.on('end', () => {
+      assert.equal(req.url, '/v1beta/models/gemini-test:generateContent');
+      assert.equal(req.headers['x-goog-api-key'], 'test-key');
+      const parsed = JSON.parse(body);
+      assert.equal(parsed.systemInstruction.parts[0].text, 'be brief');
+      assert.deepEqual(parsed.contents, [
+        { role: 'user', parts: [{ text: 'ping' }] },
+        { role: 'model', parts: [{ text: 'pong?' }] },
+        { role: 'user', parts: [{ text: 'ping again' }] },
+      ]);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'pong' }] } }] }));
+    });
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const p = new GeminiProvider('gemini-test', 'test-key', `http://127.0.0.1:${port}/v1beta`);
+  const out = await p.chat([
+    { role: 'system', content: 'be brief' },
+    { role: 'user', content: 'ping' },
+    { role: 'assistant', content: 'pong?' },
+    { role: 'user', content: 'ping again' },
+  ]);
+  assert.equal(out, 'pong');
+  server.close();
+});
+
+test('gemini provider surfaces HTTP errors and empty completions', async () => {
+  const server = createServer((_req, res) => {
+    res.writeHead(429).end('quota');
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const p = new GeminiProvider('m', 'k', `http://127.0.0.1:${port}`);
+  await assert.rejects(() => p.chat([{ role: 'user', content: 'x' }]), /429/);
   server.close();
 });

@@ -102,7 +102,8 @@ export async function buildApp() {
   });
   app.delete("/api/jobs/:id", async (req) => ({ ok: deleteJob((req.params as any).id) }));
   app.get("/api/settings", async () => ({
-    model: getSetting("model") || "gpt-4o-mini",
+    model: getSetting("model") || (getSetting("model_provider") === "gemini" ? "gemini-3.8-flash" : "gpt-4o-mini"),
+    model_provider: getSetting("model_provider") || "openai",
     model_base_url: getSetting("model_base_url") || "",
     model_key_set: Boolean(getSetting("model_api_key")),
     email_configured: Boolean(getSetting("imap_host")),

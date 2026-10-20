@@ -10,11 +10,20 @@ import { parseSchedule } from "./scheduler.js";
 import { MockProvider } from "../src/providers/mock.js";
 
 import { OpenAiCompatibleProvider } from "../src/providers/openai.js";
+import { GeminiProvider } from "../src/providers/gemini.js";
+
+export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"; // most capable model on the free tier
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
 function provider() {
   const key = getSetting("model_api_key");
+  const kind = getSetting("model_provider") || "openai";
+  if (kind === "gemini") {
+    const model = getSetting("model") || DEFAULT_GEMINI_MODEL;
+    return key ? new GeminiProvider(model, key) : new MockProvider();
+  }
   const base = getSetting("model_base_url") || "https://api.openai.com/v1";
-  const model = getSetting("model") || "gpt-4o-mini";
+  const model = getSetting("model") || DEFAULT_OPENAI_MODEL;
   return key ? new OpenAiCompatibleProvider(base, model, key) : new MockProvider();
 }
 
@@ -45,7 +54,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     if (lower === "help" || lower === "commands") {
       say(runId, [
         "What I understand:",
-        "- connect <model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
+        "- connect <gemini|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
         "- open / browse <url> - drive the live browser (Browser tab)",
         "- sign up on <site> with google - signup engine w/ OTP assist + human takeover",
@@ -350,9 +359,14 @@ export async function handleUserMessage(text: string): Promise<void> {
 
 function serviceFields(service: string) {
   switch (service) {
+    case "gemini": case "google": case "google ai studio":
+      return [
+        { key: "model", label: `Model (blank = ${DEFAULT_GEMINI_MODEL}, best free-tier model)`, secret: false },
+        { key: "model_api_key", label: "Gemini API key (free: aistudio.google.com > Get API key)", secret: true },
+      ];
     case "model": case "model key":
       return [
-        { key: "model_base_url", label: "Base URL (OpenAI-compatible; blank = OpenAI)", secret: false },
+        { key: "model_base_url", label: "Base URL (OpenAI-compatible; blank = OpenAI. Groq: https://api.groq.com/openai/v1, OpenRouter: https://openrouter.ai/api/v1, Ollama: http://localhost:11434/v1)", secret: false },
         { key: "model", label: "Model name", secret: false },
         { key: "model_api_key", label: "API key", secret: true },
       ];
@@ -389,10 +403,17 @@ function serviceFields(service: string) {
 /** Setup-card submission: validate + store. */
 export async function handleSetupSubmit(service: string, values: Record<string, string>): Promise<string> {
   const runId = newRunId();
+  const isGemini = service === "gemini" || service === "google" || service === "google ai studio";
+  if (isGemini) {
+    setSetting("model_provider", "gemini");
+    setSetting("model_base_url", "");
+    if (!values.model) setSetting("model", DEFAULT_GEMINI_MODEL);
+  }
+  if (service === "model" || service === "model key") setSetting("model_provider", "openai");
   for (const [k, v] of Object.entries(values)) {
     if (!v) continue;
     if (k === "email_pass" || k === "model_api_key" || k === "secret") {
-      saveCredential(service, values.username || values.email_user || values.model || "default", v);
+      saveCredential(isGemini ? "gemini" : service, values.username || values.email_user || values.model || "default", v);
       if (k === "model_api_key") setSetting("model_api_key", v); // provider key also in settings for quick switch
     } else {
       setSetting(k, v);
@@ -414,11 +435,12 @@ export async function handleSetupSubmit(service: string, values: Record<string, 
     return "ok";
   }
   // live validation where possible
-  if (service === "model" || service === "model key") {
+  if (service === "model" || service === "model key" || isGemini) {
     try {
       const p = provider();
       await p.chat([{ role: "user", content: "ping" }], { maxTokens: 4 });
-      say(runId, `Model connection OK (${getSetting("model") || "gpt-4o-mini"}).`);
+      const fallback = isGemini ? DEFAULT_GEMINI_MODEL : DEFAULT_OPENAI_MODEL;
+      say(runId, `Model connection OK (${getSetting("model") || fallback}).`);
       return "ok";
     } catch (err: any) {
       say(runId, `Saved, but validation failed: ${err?.message || err}`);

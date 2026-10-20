@@ -112,7 +112,7 @@ function ChatTab({ events }: { events: Event[] }) {
         {events.length === 0 && (
           <div className="text-slate-500 text-sm mt-16 text-center">
             <div className="text-3xl mb-3">🤖</div>
-            Try: <Cmd>search 2028 batch AI internships</Cmd> · <Cmd>connect model</Cmd> · <Cmd>send mail to x@y.com</Cmd> · <Cmd>track Google - STEP intern</Cmd>
+            Try: <Cmd>search 2028 batch AI internships</Cmd> · <Cmd>connect gemini</Cmd> · <Cmd>send mail to x@y.com</Cmd> · <Cmd>track Google - STEP intern</Cmd>
           </div>
         )}
         {events.map((e, i) => <EventView key={i} e={e} />)}
@@ -348,8 +348,8 @@ function VaultTab() {
       <section>
         <h2 className="text-lg font-semibold mb-2">Model router</h2>
         <div className="text-sm text-slate-300 bg-[#161b22] border border-slate-800 rounded-lg p-3">
-          Active model: <b>{settings.model}</b>{settings.model_key_set ? " (key saved)" : " - no key, offline mock provider"}
-          <div className="text-xs text-slate-500 mt-1">Switch models by saying <Cmd>connect model</Cmd> in chat.</div>
+          Active model: <b>{settings.model}</b> <span className="text-slate-400">({settings.model_provider === "gemini" ? "Google Gemini" : "OpenAI-compatible"})</span>{settings.model_key_set ? " (key saved)" : " - no key, offline mock provider"}
+          <div className="text-xs text-slate-500 mt-1">Switch models by saying <Cmd>connect gemini</Cmd> (free Google key) or <Cmd>connect model</Cmd> (OpenAI-compatible) in chat.</div>
         </div>
       </section>
       <SchedulerSection />

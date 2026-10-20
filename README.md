@@ -55,7 +55,7 @@ with the "Desktop development with C++" workload - or keep better-sqlite3 on v12
 ## What you can say (chat)
 
 ```
-connect <model|email|drive|github|telegram|profile|anything>
+connect <gemini|model|email|drive|github|telegram|profile|anything>
 search <query>                        # keyless web search (DuckDuckGo, then Bing)
 open / browse <url>                   # live browser
 sign up on <site> with google         # signup engine, OTP assist from your inbox
@@ -69,6 +69,42 @@ every 2 hours search AI internships   /  at 18:30 tracker  /  jobs
 linkedin  /  linkedin on  /  i accept the linkedin risk  /  linkedin feed
 vault  /  help
 ```
+
+## Connect an AI model (free options)
+
+Without a key the app answers with an offline mock ("Mock reply: ..."). Connect a
+real model to get real answers. All options below are free - no credit card.
+
+**Recommended: Google Gemini free tier** - say `connect gemini` in chat.
+
+1. Open [aistudio.google.com](https://aistudio.google.com) and sign in with any
+   Google account.
+2. Click **Get API key** > **Create API key** and copy it.
+3. In the app chat, say `connect gemini` and paste the key into the card.
+   Leave the model field blank to use `gemini-3.8-flash`, the most capable
+   model on the free tier.
+
+Notes:
+- A paid Gemini app subscription (Google AI Pro/Ultra) is **not** needed and is
+  not the same as an API key. The free API key is enough.
+- Free-tier rate limits (requests per minute/day) apply and are shown for your
+  project at [aistudio.google.com/rate-limit](https://aistudio.google.com/rate-limit).
+  On the free tier Google may use content to improve its products.
+- The key is stored AES-256-GCM encrypted in the local vault, like every other
+  secret.
+
+**Backup: Groq free tier** - fast, no card, works from India. Create a key at
+[console.groq.com/keys](https://console.groq.com/keys), then say `connect model`
+with base URL `https://api.groq.com/openai/v1` and a model like
+`openai/gpt-oss-120b` (about 30 requests/min and 1,000 requests/day free).
+
+**Other free routes through `connect model`** (any OpenAI-compatible endpoint):
+
+| Service | Base URL | Free notes |
+|---|---|---|
+| OpenRouter | `https://openrouter.ai/api/v1` | `:free` model variants, 50 requests/day (1,000/day after $10 lifetime credits) |
+| Mistral | `https://api.mistral.ai/v1` | Free mode, no card, low evaluation limits |
+| Ollama (local, offline) | `http://localhost:11434/v1` | Runs on your laptop, no key (enter any text); needs a few GB RAM; weaker than Gemini |
 
 ## Bridges
 
@@ -94,7 +130,7 @@ vault  /  help
 ## Tests
 
 ```bash
-npm test    # 79 tests: v1 core + v2 vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail
+npm test    # 81 tests: v1 core + v2 vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail + providers (mock, OpenAI-compatible, Gemini)
 ```
 
 ## v1 (tag `v1.0`)
