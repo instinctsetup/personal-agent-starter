@@ -8,7 +8,7 @@ Status: NOT STARTED. v1 (current main) is the base: agent core, tools, tests, gu
 3. Never invent facts on forms; ask for missing ones.
 4. Approval cards (in chat) for: send mail, submit application, sign-up on a new site, shell command, git push. Cards include [Approve & Run] [Edit Payload] [Reject].
 5. Generated site passwords go only into the encrypted vault; never logs.
-6. Every commit carries: Co-authored-by: Mahesh Thakur <ursthakurmahesh@users.noreply.github.com>
+6. Every commit carries: Co-authored-by: Mahesh Thakur <177501980+ursthakurmahesh@users.noreply.github.com>
 7. Push milestone commits often; label honestly what was verified live vs mocked.
 
 ## Spec deltas vs v1
