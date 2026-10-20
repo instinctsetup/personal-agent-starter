@@ -77,7 +77,7 @@ export function skillManifest() {
 // ---------------------------------------------------------------- the catalog
 registerTool({ name: "jobs.hunt", description: "Search the web for job/internship postings and shortlist them", args: { query: { type: "string", required: true, description: "what to hunt" } }, risk: "read" });
 registerTool({ name: "jobs.apply", description: "Fill and (after approval) submit ONE job application in the live browser", args: { url: { type: "url", required: true, description: "posting URL" } }, risk: "identity", capAction: "apply", approval: true });
-registerTool({ name: "mail.send", description: "Send one email via the connected account (approval card first)", args: { to: { type: "string", required: true }, from: { type: "string" } }, risk: "identity", capAction: "send_mail", approval: true });
+registerTool({ name: "mail.send", description: "Send one email via the connected account (approval card first)", args: { to: { type: "string", required: true }, from: { type: "string" }, body: { type: "string", description: "email body; the model drafts one when omitted" } }, risk: "identity", capAction: "send_mail", approval: true });
 registerTool({ name: "mail.inbox", description: "Read recent inbox subjects", args: {}, risk: "read" });
 registerTool({ name: "mail.draft", description: "Draft an email with the model (never sends)", args: { to: { type: "string", required: true } }, risk: "read" });
 registerTool({ name: "tracker.list", description: "List tracked applications", args: {}, risk: "read" });
@@ -93,6 +93,6 @@ registerTool({ name: "linkedin.invite", description: "Send a LinkedIn connection
 registerTool({ name: "drive.list", description: "List Drive files", args: {}, risk: "read" });
 registerTool({ name: "drive.upload", description: "Upload a file to Drive", args: { path: { type: "string", required: true } }, risk: "write" });
 registerTool({ name: "git.init", description: "git init a repo", args: { name: { type: "string", required: true } }, risk: "write" });
-registerTool({ name: "git.commit", description: "git commit a path", args: { path: { type: "string", required: true } }, risk: "write" });
-registerTool({ name: "git.push", description: "git push a path", args: { path: { type: "string", required: true } }, risk: "write" });
-registerTool({ name: "scheduler.add", description: "Schedule a recurring or one-time command (free-form spec)", args: {}, risk: "write" });
+registerTool({ name: "git.commit", description: "git commit a path", args: { path: { type: "string", required: true }, message: { type: "string" } }, risk: "write" });
+registerTool({ name: "git.push", description: "git push a path", args: { path: { type: "string", required: true }, remote: { type: "string" }, branch: { type: "string" } }, risk: "write" });
+registerTool({ name: "scheduler.add", description: "Schedule a recurring or one-time command", args: { command: { type: "string", required: true, description: "e.g. 'every 2 hours search AI internships' or 'at 18:30 tracker'" } }, risk: "write" });

@@ -172,6 +172,28 @@ their own setup cards and join every model race automatically:
 Every chat answer is a race across all connected providers plus a local model
 when enabled: first good answer wins, and the Traces tab shows which one did.
 
+## MCP server
+
+The full tool registry is exposed to MCP clients (Claude Desktop, IDEs, other
+agents) at `POST /mcp` - JSON-RPC 2.0, streamable-HTTP shape, stateless.
+`tools/list` serves every registered tool with a JSON Schema, risk tier,
+approval gate and daily-cap annotation; `tools/call` runs through the same
+gates as chat: schema + cap pre-flight, and approval-gated tools (mail.send,
+jobs.apply, signup.google, linkedin.*) surface the real approval card in your
+UI and complete only when you approve. Every MCP call is traced as an `mcp-*`
+run in the Traces tab.
+
+Client config (when `APP_PASSWORD` is set, the app password is the bearer token):
+
+```json
+{ "mcpServers": { "personal-agent": { "url": "http://127.0.0.1:8787/mcp",
+  "headers": { "Authorization": "Bearer <APP_PASSWORD>" } } } }
+```
+
+Limits: POST only (no SSE stream, no session ids), single messages (no batch),
+and approval-gated calls stay open until the card resolves (up to 15 min) -
+that wait IS the approval gate.
+
 ## Bridges
 
 - **Telegram**: store a bot token (`connect telegram`), then `POST /api/bridge/telegram/start`.
@@ -196,8 +218,8 @@ when enabled: first good answer wins, and the Traces tab shows which one did.
 ## Tests
 
 ```bash
-npm test    # 197 tests: v1 core + v2 (vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail/providers)
-            # + v3 (LLM router, boards, plans, caps, memory, local models, skill registry, tracing, help audit)
+npm test    # 204 tests: v1 core + v2 (vault/otp/search/tracker/approvals/scheduler/git/signup/drive/bridge/mail/providers)
+            # + v3 (LLM router, boards, plans, caps, memory, local models, skill registry, tracing, help audit, MCP server)
 ```
 
 ## v1 (tag `v1.0`)

@@ -17,11 +17,13 @@ import { listSignups } from "./signup.js";
 import { handleSlackEvent, verifySlackSignature, startTelegramBridge } from "./bridge.js";
 import { registerAuth, isAuthed, authEnabled } from "./auth.js";
 import { getBoard, boardData, renderBoardPage } from "./boards.js";
+import { registerMcp } from "./mcp.js";
 import { getCredential } from "./vault.js";
 
 export async function buildApp() {
   const app = Fastify({ logger: false });
   registerAuth(app);
+  registerMcp(app);
   await app.register(fastifyWebsocket);
   const br = await import("./browser.js");
 
