@@ -93,9 +93,48 @@ export function filterMail(msgs: MailSummary[], query: string): MailSummary[] {
     .map((s) => s.m);
 }
 
+/** Mail triage: which of the recent mails actually need HIM to reply.
+ *  Deterministic, read-only scoring - automated mail (no-reply, newsletters,
+ *  notifications) is excluded; direct questions and job-search signals
+ *  (recruiter, interview, shortlist, offer, follow-up) rise to the top. */
+const AUTOMATED_FROM = /no-?reply|donotreply|mailer-daemon|newsletter|notifications?@|updates?@|promo|marketing|digest|bounce/i;
+const AUTOMATED_SUBJECT = /unsubscribe|newsletter|offer ends|flash sale|\d+% off|receipt|invoice|statement|verification code|password reset/i;
+const REPLY_SIGNALS: Array<{ re: RegExp; reason: string; weight: number }> = [
+  { re: /\?/, reason: "asks a direct question", weight: 2 },
+  { re: /\b(please|kindly)\s+(reply|respond|confirm|let (me|us) know)/i, reason: "explicitly asks for a response", weight: 3 },
+  { re: /\b(following up|follow[ -]?up|gentle reminder|bumping this)/i, reason: "someone is following up", weight: 3 },
+  { re: /\b(recruiter|interview|shortlist|offer letter|hiring|your application|next steps?|assessment|coding round)/i, reason: "job-search related", weight: 3 },
+  { re: /\b(deadline|due (date|by)|expires?|last date|before (eod|tomorrow))/i, reason: "has a deadline", weight: 2 },
+  { re: /\b(urgent|important|action (required|needed))\b/i, reason: "marked urgent", weight: 2 },
+];
+
+export type TriageItem = MailSummary & { score: number; reasons: string[] };
+
+export function triageMail(msgs: MailSummary[], now = Date.now()): TriageItem[] {
+  const out: TriageItem[] = [];
+  for (const m of msgs) {
+    if (AUTOMATED_FROM.test(m.from) || AUTOMATED_SUBJECT.test(m.subject)) continue;
+    const text = `${m.subject}\n${m.snippet}`;
+    const hits = REPLY_SIGNALS.filter((s) => s.re.test(text));
+    let score = hits.reduce((n, s) => n + s.weight, 0);
+    const age = now - new Date(m.date || 0).getTime();
+    if (Number.isFinite(age)) {
+      if (age < 48 * 3_600_000) score += 1; // fresh mail matters more
+      if (age > 14 * 86_400_000) score -= 2; // ancient threads fade
+    }
+    if (score > 0) out.push({ ...m, score, reasons: hits.map((s) => s.reason) });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, 5);
+}
+
+/** Recent inbox through the test seam when set. */
+export async function recentMail(limit = 30): Promise<MailSummary[]> {
+  return inboxFetcher ? inboxFetcher(limit) : listInbox(limit);
+}
+
 /** Search the recent inbox (sender, subject, body snippet). Read-only. */
 export async function searchMail(query: string, limit = 30): Promise<MailSummary[]> {
-  const recent = inboxFetcher ? await inboxFetcher(limit) : await listInbox(limit);
+  const recent = await recentMail(limit);
   return filterMail(recent, query).slice(0, 5);
 }
 

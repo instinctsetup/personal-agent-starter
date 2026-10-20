@@ -458,6 +458,26 @@ function matchMailQuery(cmd: string): { query: string; latest?: boolean } | null
   return null;
 }
 
+/** "what needs a reply" - deterministic inbox triage, read-only. */
+async function answerMailTriage(runId: string): Promise<void> {
+  const { mailConfigured, recentMail, triageMail } = await import("./mail.js");
+  if (!mailConfigured()) {
+    say(runId, "Email isn't connected yet - say \`connect email\` first (Gmail address + app password).");
+    return;
+  }
+  let recent;
+  try {
+    recent = await toolCall(runId, "mail.triage", {}, () => recentMail(30));
+  } catch (err: any) {
+    say(runId, `Couldn't reach your mailbox: ${err?.message || err}. The connection details may need a refresh - say \`connect email\` to re-enter them.`);
+    return;
+  }
+  const top = triageMail(recent);
+  say(runId, top.length
+    ? `These ${top.length} look like they need you:\n` + top.map((m, i) => `${i + 1}. ${m.subject}\n   from ${m.from}${m.date ? ` (${new Date(m.date).toLocaleString()})` : ""}\n   why: ${m.reasons.join("; ")}\n   ${m.snippet.slice(0, 120)}`).join("\n") + "\n\nSay `latest mail from <name>` to open one, or `send mail to <addr>: <body>` to reply."
+    : "Nothing in your last 30 mails needs a reply - you're caught up.");
+}
+
 async function answerMailQuery(runId: string, q: { query: string; latest?: boolean }): Promise<void> {
   const { mailConfigured, searchMail, readMailBody } = await import("./mail.js");
   if (!mailConfigured()) {
@@ -680,6 +700,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- mail search <words> / latest mail - find and read mail (\"what does the 2step mail say\", \"any reply from Priya\")",
+        "- what needs a reply - inbox triage: the few mails actually waiting on you, with reasons",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
         "- git init <name> / commit <path> [msg] / push <path> / create github repo <name> / git status <path>",
         "- every <N> <minutes|hours> <command> / at <HH:MM> <command> / jobs - scheduler",
@@ -1109,6 +1130,7 @@ export async function handleUserMessage(text: string, routed = false, channel: C
 
     // natural-language email requests ("check my email", "any new mails?") - never fall through silently
     const canonicalMailQ = matchMailQuery(cmd);
+    if (!canonicalMailQ && /^(?:what needs a reply|mail triage|triage|anything needs? (?:a )?(?:reply|response)|who'?s waiting on (?:me|a reply)|what (?:mail|email) needs (?:a )?(?:reply|response))\??$/i.test(cmd)) { await answerMailTriage(runId); return; }
     if (canonicalMailQ && lower !== "inbox") { await answerMailQuery(runId, canonicalMailQ); return; }
     const emailIntent = /\b(e-?mails?|inbox|gmail|mails?)\b/.test(lower) && !/^(send|connect|draft|write|compose)\b/.test(lower);
     if (lower === "inbox" || lower === "check mail" || lower === "check email" || emailIntent) {
