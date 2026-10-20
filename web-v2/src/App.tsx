@@ -38,11 +38,21 @@ const TABS = [
   { id: "vault", label: "Vault & Scheduler", icon: "vault" },
 ] as const;
 
+type SysSettings = { model?: string; model_provider?: string; model_key_set?: boolean; email_configured?: boolean; email_user?: string; linkedin_on?: boolean };
+
 export default function App() {
   const [tab, setTab] = useState<string>("chat");
   const [events, setEvents] = useState<Event[]>([]);
   const [connected, setConnected] = useState(false);
+  const [sys, setSys] = useState<SysSettings>({});
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    const load = () => fetch("/api/settings").then(r => r.json()).then(setSys).catch(() => {});
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const loadHistory = () => fetch("/api/history").then(r => r.json()).then(d => {
@@ -76,9 +86,23 @@ export default function App() {
             </button>
           ))}
         </nav>
-        <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-400 flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full ${connected ? "bg-emerald-400" : "bg-red-400"}`} />
-          {connected ? "daemon live" : "reconnecting…"}
+        <div className="px-4 py-3 border-t border-slate-800 text-xs text-slate-400 space-y-1.5">
+          <div className="flex items-center gap-2" title="Active model">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${sys.model_key_set ? "bg-emerald-400" : "bg-slate-600"}`} />
+            <span className="truncate">{sys.model || "…"}{sys.model_key_set ? "" : " (no key)"}</span>
+          </div>
+          <div className="flex items-center gap-2" title="Email account">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${sys.email_configured ? "bg-emerald-400" : "bg-slate-600"}`} />
+            <span className="truncate">{sys.email_configured ? sys.email_user || "email connected" : "email not connected"}</span>
+          </div>
+          <div className="flex items-center gap-2" title="LinkedIn assist">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${sys.linkedin_on ? "bg-emerald-400" : "bg-slate-600"}`} />
+            <span className="truncate">linkedin {sys.linkedin_on ? "on" : "off"}</span>
+          </div>
+          <div className="flex items-center gap-2 pt-1 border-t border-slate-800/60">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${connected ? "bg-emerald-400" : "bg-red-400"}`} />
+            {connected ? "daemon live" : "reconnecting…"}
+          </div>
         </div>
       </aside>
       <main className="flex-1 min-w-0">
@@ -124,6 +148,12 @@ function ChatTab({ events }: { events: Event[] }) {
         <div ref={bottomRef} />
       </div>
       <div className="border-t border-slate-800 p-4">
+        <div className="flex gap-1.5 max-w-4xl mx-auto mb-2 flex-wrap">
+          {[["Check my inbox", "check my email"], ["Hunt internships", "hunt SDE internships summer 2027"], ["Applications", "applications"], ["Draft an email", "send mail to "], ["help", "help"]].map(([label, cmd]) => (
+            <button key={label} onClick={() => cmd.endsWith(" ") ? setInput(cmd) : (setInput(""), fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: cmd }) }))}
+              className="text-[11px] bg-[#161b22] border border-slate-700 hover:border-sky-500 hover:text-sky-300 rounded-full px-3 py-1 text-slate-400">{label}</button>
+          ))}
+        </div>
         <div className="flex gap-2 max-w-4xl mx-auto">
           <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && send()}
             placeholder="Tell your agent what to do…"
@@ -251,7 +281,14 @@ function ApprovalCard({ e }: { e: Event }) {
         {editing
           ? <textarea value={payload} onChange={ev => setPayload(ev.target.value)} rows={6}
               className="w-full bg-[#0d1117] border border-slate-700 rounded-lg p-2 text-xs font-mono mb-2" />
-          : <pre className="bg-[#0d1117] border border-slate-800 rounded-lg p-2 text-xs overflow-x-auto mb-2">{payload}</pre>}
+          : <div className="bg-[#0d1117] border border-slate-800 rounded-lg p-2 text-xs mb-2 max-h-48 overflow-y-auto">
+              {Object.entries(e.payload || {}).map(([k, v]) => (
+                <div key={k} className="flex gap-2 py-0.5">
+                  <span className="w-20 shrink-0 text-slate-500">{k}</span>
+                  <span className="text-slate-200 whitespace-pre-wrap break-all">{String(v)}</span>
+                </div>
+              ))}
+            </div>}
         <div className="flex gap-2">
           <button onClick={() => decide("approved")} className="bg-emerald-600 hover:bg-emerald-500 rounded-lg px-3 py-1.5 text-xs font-semibold">Approve &amp; Run</button>
           <button onClick={() => setEditing(!editing)} className="bg-slate-700 hover:bg-slate-600 rounded-lg px-3 py-1.5 text-xs">{editing ? "Preview" : "Edit Payload"}</button>
@@ -332,10 +369,13 @@ function JobsTab() {
               <td className="text-slate-300">{a.role}</td>
               <td className="text-slate-400 text-xs">{a.portal}</td>
               <td>
-                <select value={a.status} onChange={ev => setStatus(a.id, ev.target.value)}
-                  className="bg-[#161b22] border border-slate-700 rounded-lg px-2 py-1 text-xs">
-                  {statuses.map(s => <option key={s}>{s}</option>)}
-                </select>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2 h-2 rounded-full ${a.status === "Applied" ? "bg-emerald-400" : a.status === "Replied" ? "bg-sky-400" : a.status === "Rejected" ? "bg-red-400" : a.status === "Scouted" ? "bg-violet-400" : a.status === "Cold Mailed" ? "bg-amber-400" : "bg-slate-500"}`} />
+                  <select value={a.status} onChange={ev => setStatus(a.id, ev.target.value)}
+                    className="bg-[#161b22] border border-slate-700 rounded-lg px-2 py-1 text-xs">
+                    {statuses.map(s => <option key={s}>{s}</option>)}
+                  </select>
+                </div>
               </td>
               <td>{a.url && <a href={a.url} target="_blank" className="text-sky-400 text-xs">link ↗</a>}</td>
             </tr>

@@ -107,6 +107,8 @@ export async function buildApp() {
     model_base_url: getSetting("model_base_url") || "",
     model_key_set: Boolean(getSetting("model_api_key")),
     email_configured: Boolean(getSetting("imap_host")),
+    email_user: getSetting("email_user") || "",
+    linkedin_on: getSetting("linkedin_enabled") === "1",
   }));
   app.post("/api/settings", async (req) => {
     for (const [k, v] of Object.entries(req.body as Record<string, string>)) setSetting(k, v);

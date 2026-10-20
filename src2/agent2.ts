@@ -131,8 +131,9 @@ export function fallbackDraft(request: string, _to: string, senderName = ""): { 
   const referral = /refer/i.test(request);
   const subject = referral ? "Referral request" : "Quick note";
   const cleaned = ask.replace(/^(?:asking|to ask)\s+for\s+/i, "").trim();
+  const extra = cleaned && !/^(a\s+)?refer(r)?al(s)?( for (me|a job|an? \w+))?\.?$/i.test(cleaned) ? ` - ${cleaned}` : "";
   const line = referral
-    ? `I wanted to ask if you could refer me${cleaned ? ` - ${cleaned}` : ""}.`
+    ? `I wanted to ask if you could refer me${extra}.`
     : cleaned || request;
   return { subject, body: `Hi,\n\n${line}\n\nThanks,${senderName ? `\n${senderName}` : ""}` };
 }
