@@ -156,6 +156,8 @@ export async function buildApp() {
     return { ok: setJobEnabled((req.params as any).id, enabled) };
   });
   app.delete("/api/jobs/:id", async (req) => ({ ok: deleteJob((req.params as any).id) }));
+  app.get("/api/version", async () => (await import("./version.js")).APP_VERSION);
+
   app.get("/api/settings", async () => ({
     model: getSetting("model") || (getSetting("model_provider") === "gemini" ? "gemini-3.8-flash" : "gpt-4o-mini"),
     model_provider: getSetting("model_provider") || "openai",

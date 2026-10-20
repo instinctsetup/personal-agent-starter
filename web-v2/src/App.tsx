@@ -47,11 +47,13 @@ export default function App() {
   const [events, setEvents] = useState<Event[]>([]);
   const [connected, setConnected] = useState(false);
   const [sys, setSys] = useState<SysSettings>({});
+  const [ver, setVer] = useState<{ version?: string; commit?: string; commitDate?: string; startedAt?: string }>({});
   const [auth, setAuth] = useState<{ enabled: boolean; authed: boolean } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     fetch("/api/auth/status").then(r => r.json()).then(setAuth).catch(() => setAuth({ enabled: false, authed: true }));
+    fetch("/api/version").then(r => r.json()).then(setVer).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -86,7 +88,9 @@ export default function App() {
       <aside className="w-56 shrink-0 border-r border-slate-800 bg-[#0d1117] flex flex-col">
         <div className="px-4 py-4 border-b border-slate-800">
           <div className="font-bold text-lg">Personal Agent</div>
-          <div className="text-xs text-slate-400">v2.0 · local-first</div>
+          <div className="text-xs text-slate-400" title={ver.startedAt ? `started ${ver.startedAt}` : undefined}>
+            v{ver.version || "2.0"} · local-first{ver.commit ? ` · ${ver.commit}` : ""}{ver.commitDate ? ` (${ver.commitDate})` : ""}
+          </div>
         </div>
         <nav className="flex-1 py-2">
           {TABS.map(t => (

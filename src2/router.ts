@@ -42,6 +42,19 @@ export const COMMAND_GRAMMAR = `
 - local | local setup | local on | local off   (on-device models via Ollama)
 - skills   (list every tool with its risk tier, caps and approval gates)
 - traces | trace <run-id>   (structured run logs as a span tree)
+- laptop status | system info   (his laptop's battery, RAM, disk free, CPU - "how's my laptop doing", "battery level")
+- what's on my clipboard | copy <text>   (read or set the clipboard)
+- open <app>   (launch a program on his laptop: notepad, calculator, paint... - "open notepad")
+- note: <text> | notes   (quick timestamped notes)
+- remind me at 5pm to <text> | remind me in 30 minutes to <text>   (one-shot reminders)
+- quota   (today's free-tier model usage per provider - "usage", "api usage")
+- linkedin crm | linkedin follow ups | mark <name> replied   (his LinkedIn outreach pipeline and follow-up nudges)
+- what needs a reply   (inbox triage: the few mails actually waiting on him)
+- watch <folder> | watched folders | stop watching <folder>   (folder watcher with undo)
+- clean up downloads | undo file cleanup   (safe file organizer with an undo ledger)
+- every morning <command> | routines | delete routine <name>   (named routines)
+- read text in <image-path>   (OCR: text from a screenshot or scan)
+- version   (which build of the app is running)
 - board <pipeline|inbox|overview>   (live shareable dashboard link)
 - boards   (list dashboard links)
 - unshare <pipeline|inbox|overview>   (kill the share link, mint a new one)
@@ -62,7 +75,7 @@ export function routerPrompt(userText: string, memory = ""): ChatMessage[] {
         "Reply with STRICT JSON, one of:",
         '{"commands": ["<canonical command>", ...]}  - one or more commands, executed in order as a plan',
         '{"clarify": "<one short question>"}  - when a required detail is missing (e.g. no email address, no job URL, which account)',
-        '{"chat": true}  - general conversation, not an action. NEVER chat for questions about the user\'s own mail, files, applications or schedule - those are commands (mail search, drive, applications, jobs).',
+        '{"chat": true}  - general conversation, not an action. NEVER chat for questions about the user\'s own mail, files, applications, schedule, laptop/system status, clipboard, notes, model usage, or LinkedIn outreach - those are commands (mail search, laptop status, clipboard, notes, quota, linkedin crm, applications, jobs).',
         "",
         "Rules:",
         "- Understand any phrasing: fix typos, translate Hinglish, ignore politeness filler.",

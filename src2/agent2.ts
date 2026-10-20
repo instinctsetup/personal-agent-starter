@@ -134,6 +134,7 @@ const RACE_ROUNDS = 2;
 
 import type { ChatMessage } from "../src/providers/types.js";
 import { providerOf, recordAttempt, markWon, quotaToday, formatQuota, setQuotaCap } from "./quota.js";
+import { APP_VERSION } from "./version.js";
 
 interface Racer { label: string; run: (signal: AbortSignal) => Promise<string>; }
 
@@ -442,6 +443,24 @@ function extractMemories(runId: string, userText: string, agentReply: string) {
     .catch(() => { /* memory is best-effort, never user-facing */ });
 }
 
+/** Unambiguous local/system questions are commands, not conversation. Deterministic - beats a flaky
+ * router model (a free-tier router model returned "chat" for "laptop status" and the user got a
+ * denial instead of his battery level). Returns the canonical command to execute. */
+export function matchSystemCommand(cmd: string): string | null {
+  const c = cmd.trim().replace(/[?!.\s]+$/, "");
+  if (/^(?:system info|sys ?info|laptop status|battery(?: status| level)?|how'?s my (?:laptop|pc|computer)(?: doing)?|how is my (?:laptop|pc|computer)(?: doing)?)$/i.test(c)) return "laptop status";
+  if (/^(?:what'?s|whats) on my clipboard$/i.test(c) || /^clipboard$/i.test(c)) return "what's on my clipboard";
+  if (/^(?:quota|quotas|model usage|api usage|usage)$/i.test(c)) return "quota";
+  if (/^linkedin (?:crm|pipeline|outreach)$/i.test(c)) return "linkedin crm";
+  if (/^linkedin follow ?ups?$/i.test(c) || /^who should i follow up with$/i.test(c)) return "linkedin follow ups";
+  if (/^(?:what needs a reply|mail triage|triage|anything needs? (?:a )?(?:reply|response)|who'?s waiting on (?:me|a reply))$/i.test(c)) return "what needs a reply";
+  if (/^notes$/i.test(c)) return "notes";
+  if (/^(?:version|what version|which version)(?: are you(?: running)?)?$/i.test(c)) return "version";
+  const mOpen = c.match(/^open ([a-z0-9 ]{2,25})$/i);
+  if (mOpen && isKnownApp(mOpen[1].trim()) && !/[./]/.test(mOpen[1])) return `open ${mOpen[1].trim()}`;
+  return null;
+}
+
 /** Mail questions are commands, not conversation. Deterministic - beats a flaky router model. */
 function matchMailQuery(cmd: string): { query: string; latest?: boolean } | null {
   const canonical = cmd.match(/^mail search\s+(.+)$/i) || cmd.match(/^mail from\s+(.+)$/i);
@@ -640,6 +659,8 @@ export async function handleUserMessage(text: string, routed = false, channel: C
     if (!routed) {
       const mq = matchMailQuery(cmd);
       if (mq) { await answerMailQuery(runId, mq); return; }
+      const sc = matchSystemCommand(cmd);
+      if (sc) { await handleUserMessage(sc, true, channel); return; }
     }
 
     if (!routed && !provider().offline) {
@@ -679,6 +700,11 @@ export async function handleUserMessage(text: string, routed = false, channel: C
         return;
       }
       // route null (model down/unparseable): fall through to the regex cascade
+    }
+
+    if (lower === "version") {
+      say(runId, `Running v${APP_VERSION.version}, commit ${APP_VERSION.commit}${APP_VERSION.commitDate ? ` (${APP_VERSION.commitDate})` : ""}. If that's not the newest, update with: git pull, then npm start.`);
+      return;
     }
 
     if (lower === "help" || lower === "commands") {
