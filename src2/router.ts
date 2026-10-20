@@ -28,7 +28,7 @@ export const COMMAND_GRAMMAR = `
 - linkedin on | linkedin off | linkedin feed
 - linkedin message <profile-url>: <text>
 - connect with <profile-url> on linkedin
-- connect <service>   (gemini, groq, openrouter, email, drive, telegram, profile, github...)
+- connect <service>   (gemini, groq, openrouter, cerebras, github models, email, drive, telegram, profile, github...)
 - gemini-web on | gemini-web off
 - vault | drive
 - upload <path> to drive [as doc] | sync <dir> to drive
@@ -38,6 +38,7 @@ export const COMMAND_GRAMMAR = `
 - caps | cap <action> <N>   (daily limits)
 - remember <fact> | memories | forget <id>   (durable memory)
 - local | local setup | local on | local off   (on-device models via Ollama)
+- skills   (list every tool with its risk tier, caps and approval gates)
 - board <pipeline|inbox|overview>   (live shareable dashboard link)
 - boards   (list dashboard links)
 - unshare <pipeline|inbox|overview>   (kill the share link, mint a new one)

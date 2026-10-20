@@ -110,6 +110,10 @@ export async function buildApp() {
   });
 
   app.get("/api/vault", async () => ({ entries: listCredentials() }));
+  app.get("/api/skills", async () => {
+    const { skillManifest } = await import("./skills.js");
+    return { tools: skillManifest() };
+  });
   app.get("/api/jobs", async () => ({ jobs: listJobs() }));
   app.get("/api/signups", async () => ({ signups: listSignups() }));
   app.get("/api/drive", async () => {

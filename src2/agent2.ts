@@ -41,6 +41,12 @@ function say(runId: string, text: string, extra: Partial<AgentEvent> = {}) {
 }
 
 async function toolCall<T>(runId: string, tool: string, input: unknown, fn: () => Promise<T>): Promise<T> {
+  const { gateTool } = await import("./skills.js");
+  const gate = gateTool(tool, input);
+  if (!gate.allowed) {
+    emit({ ts: Date.now(), run_id: runId, kind: "tool_result", tool, input, error: gate.reason, duration_ms: 0, state: "error" });
+    throw new Error(gate.reason);
+  }
   const started = Date.now();
   emit({ ts: started, run_id: runId, kind: "tool_call", tool, input, state: "running" });
   try {
@@ -150,6 +156,20 @@ export function buildRacers(messages: ChatMessage[], opts?: { maxTokens?: number
     racers.push({
       label: "openrouter/llama-3.3-70b:free",
       run: (signal) => new OpenAiCompatibleProvider(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1", "meta-llama/llama-3.3-70b-instruct:free", orKey, signal).chat(messages, opts),
+    });
+  }
+  const cbKey = getSetting("cerebras_api_key");
+  if (cbKey) {
+    racers.push({
+      label: "cerebras/llama-3.3-70b",
+      run: (signal) => new OpenAiCompatibleProvider(process.env.CEREBRAS_BASE_URL || "https://api.cerebras.ai/v1", "llama-3.3-70b", cbKey, signal).chat(messages, opts),
+    });
+  }
+  const ghKey = getSetting("github_models_key");
+  if (ghKey) {
+    racers.push({
+      label: "github-models/gpt-4o-mini",
+      run: (signal) => new OpenAiCompatibleProvider(process.env.GITHUB_MODELS_BASE_URL || "https://models.github.ai/inference", "openai/gpt-4o-mini", ghKey, signal).chat(messages, opts),
     });
   }
   if (localEnabled()) {
@@ -522,7 +542,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
     if (lower === "help" || lower === "commands") {
       say(runId, [
         "What I understand (plain English works - \"can u apply to <url>\" is fine):",
-        "- connect <gemini|groq|openrouter|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
+        "- connect <gemini|groq|openrouter|cerebras|github models|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
         "- gemini-web on/off - experimental: answer via the Gemini website when every API is down (you log in once in the Browser tab)",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
         "- hunt <query> - job hunt: shortlist -> \"apply to 1,3\" / \"apply all\" (tracked as Scouted)",
@@ -535,6 +555,7 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
         "- caps / cap <action> <N> - per-day limits on sends and applications",
         "- remember <fact> / memories / forget <id> - durable memory across sessions (secrets stay in the vault)",
         "- local / local setup / local on|off - private on-device models via Ollama (auto-detects your GPU, cloud race as fallback)",
+        "- skills - the full tool manifest (what I can do, risk tier, caps and approval gates per tool)",
         "- send mail to <addr>: <body> - or plain English (\"send mail to x@y.com asking for a referral\"); I draft, you approve before sending",
         "- inbox / check mail - read recent mail",
         "- drive / upload <path> to drive [as doc] / sync <dir> to drive",
@@ -702,6 +723,16 @@ export async function handleUserMessage(text: string, routed = false): Promise<v
       setLocalEnabled(true);
       const envNote = "For more context on a 4GB card: set OLLAMA_KV_CACHE_TYPE=q8_0 and OLLAMA_FLASH_ATTENTION=1 (halves context memory).";
       say(runId, `Local models ready and ON: ${st.tier.chat} (chat) + ${st.tier.router} (routing). Verify GPU residency anytime with \`ollama ps\` (PROCESSOR should read 100% GPU). ${envNote}`);
+      return;
+    }
+
+    // ---- skills: the capability manifest --------------------------------------
+    if (lower === "skills" || lower === "tools") {
+      const { skillManifest } = await import("./skills.js");
+      const m = skillManifest();
+      say(runId, `I have ${m.length} registered tools:\n` + m.map((t) =>
+        `- ${t.name} (${t.risk}${t.approval ? ", approval-gated" : ""}${t.cap ? `, capped/day` : ""}) - ${t.description}`
+      ).join("\n"));
       return;
     }
 
@@ -1143,6 +1174,14 @@ function serviceFields(service: string) {
     case "openrouter":
       return [
         { key: "openrouter_api_key", label: "OpenRouter API key (free: openrouter.ai > Keys). Joins every model race.", secret: true },
+      ];
+    case "cerebras":
+      return [
+        { key: "cerebras_api_key", label: "Cerebras API key (free: cloud.cerebras.ai > API Keys, 30 req/min, ~1M tokens/day). Joins every model race.", secret: true },
+      ];
+    case "github models": case "github-models":
+      return [
+        { key: "github_models_key", label: "GitHub personal access token (github.com > Settings > Developer settings > Tokens - free model access incl. gpt-4o-mini). Joins every model race.", secret: true },
       ];
     case "model": case "model key":
       return [
