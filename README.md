@@ -92,6 +92,11 @@ Notes:
   On the free tier Google may use content to improve its products.
 - The key is stored AES-256-GCM encrypted in the local vault, like every other
   secret.
+- `connect gemini` checks the key in two steps: a fast model-metadata lookup,
+  then a tiny test completion. Each step is timed and logged to the app
+  console. Thinking models can take a while to answer the first call, so the
+  test completion allows 90s; if the connect card still fails, run
+  `npm run check:gemini` and paste its output (the key is always redacted).
 
 **Backup: Groq free tier** - fast, no card, works from India. Create a key at
 [console.groq.com/keys](https://console.groq.com/keys), then say `connect model`

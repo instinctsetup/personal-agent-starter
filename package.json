@@ -17,7 +17,8 @@
     "demo": "node scripts/record-demo.mjs",
     "dev2": "tsx src2/server.ts",
     "build:ui": "vite build web-v2",
-    "start:legacy": "node dist/src/server.js"
+    "start:legacy": "node dist/src/server.js",
+    "check:gemini": "tsx scripts/check-gemini.ts"
   },
   "dependencies": {
     "@fastify/static": "^10.1.6",

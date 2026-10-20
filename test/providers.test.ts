@@ -179,3 +179,65 @@ test('validateGeminiConnection checks model metadata, then pings generation', as
   assert.deepEqual(seen, ['GET /models/gemini-test', 'POST /models/gemini-test:generateContent']);
   server.close();
 });
+
+test('gemini timeout message names the step and reports step events', async () => {
+  const server = createServer((_req, _res) => {
+    /* never respond */
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const events: string[] = [];
+  const p = new GeminiProvider('m', 'k', `http://127.0.0.1:${port}`, {
+    timeoutMs: 50,
+    onStep: (e) => events.push(`${e.step}:${e.attempt}:${e.state}:${typeof e.elapsedMs}`),
+  });
+  const err = await p.chat([{ role: 'user', content: 'x' }]).then(() => null, (e) => e);
+  assert.equal(err?.code, 'timeout');
+  assert.match(err.message, /during the chat request/);
+  assert.deepEqual(events, ['chat:1:start:number', 'chat:1:retry:number', 'chat:2:start:number', 'chat:2:error:number']);
+  server.close();
+});
+
+test('validateGeminiConnection names the generate ping when it is the slow step', async () => {
+  const server = createServer((req, res) => {
+    if (req.url?.includes(':generateContent')) return; // slow thinking model: never answers the ping
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ name: 'models/gemini-test' }));
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  const events: { step: string; state: string; elapsedMs: number }[] = [];
+  const err = await validateGeminiConnection('gemini-test', 'k', `http://127.0.0.1:${port}`, {
+    timeoutMs: 50,
+    onStep: (e) => events.push({ step: e.step, state: e.state, elapsedMs: e.elapsedMs }),
+  }).then(() => null, (e) => e);
+  assert.equal(err?.code, 'timeout');
+  assert.match(err.message, /generate ping/);
+  assert.match(err.message, /thinking model/);
+  // the fast model-check succeeded first; only the ping timed out
+  assert.deepEqual(
+    events.filter((e) => e.state === 'ok').map((e) => e.step),
+    ['model-check'],
+  );
+  server.close();
+});
+
+test('validateGeminiConnection succeeds when the ping is slow but within budget', async () => {
+  const server = createServer((req, res) => {
+    const answer = () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (req.url?.includes(':generateContent')) {
+        res.end(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'pong' }] } }] }));
+      } else {
+        res.end(JSON.stringify({ name: 'models/gemini-test' }));
+      }
+    };
+    // thinking-model latency: 300ms to first byte on generation
+    if (req.url?.includes(':generateContent')) setTimeout(answer, 300);
+    else answer();
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+  const port = (server.address() as { port: number }).port;
+  await validateGeminiConnection('gemini-test', 'k', `http://127.0.0.1:${port}`, { timeoutMs: 5_000, onStep: () => {} });
+  server.close();
+});
