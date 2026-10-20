@@ -137,16 +137,29 @@ export function fallbackDraft(request: string, _to: string, senderName = ""): { 
   return { subject, body: `Hi,\n\n${line}\n\nThanks,${senderName ? `\n${senderName}` : ""}` };
 }
 
+
+/** Strip chat-filler openers so "can u apply to ..." matches the same commands as "apply to ...". */
+export function normalizeCommand(t: string): string {
+  let s = t.trim();
+  let prev = "";
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(/^(?:can u|can you|could you|would you|will you|please|pls|plz|hey|yo|bro|bhai|ok|okay|so|now|just)\b[\s,]*/i, "");
+  }
+  return s.trim();
+}
+
 export async function handleUserMessage(text: string): Promise<void> {
   const runId = newRunId();
   emit({ ts: Date.now(), run_id: runId, kind: "text", role: "user", text });
   const t = text.trim();
-  const lower = t.toLowerCase();
+  const cmd = normalizeCommand(t);
+  const lower = cmd.toLowerCase();
 
   try {
     if (lower === "help" || lower === "commands") {
       say(runId, [
-        "What I understand:",
+        "What I understand (plain English works - \"can u apply to <url>\" is fine):",
         "- connect <gemini|model|email|drive|github|telegram|profile|any-service> - setup cards with secure storage",
         "- search <query> - keyless web search (DuckDuckGo, then Bing)",
         "- open / browse <url> - drive the live browser (Browser tab)",
@@ -201,7 +214,7 @@ export async function handleUserMessage(text: string): Promise<void> {
         : "No applications tracked yet. The tracker tab is ready when you are.");
       return;
     }
-    const mTrack = t.match(/^track (.+?)(?:\s*-\s*(.+))?$/i);
+    const mTrack = cmd.match(/^track (.+?)(?:\s*-\s*(.+))?$/i);
     if (mTrack) {
       const app = await toolCall(runId, "tracker.add", { company: mTrack[1], role: mTrack[2] }, async () =>
         addApplication({ company: mTrack[1].trim(), role: mTrack[2]?.trim() }));
@@ -330,7 +343,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     }
 
     // ---- universal job applier ------------------------------------------
-    const mApply = t.match(/^apply (?:to|for) (\S+)$/i);
+    const mApply = cmd.match(/^apply (?:to|for)(?: this job| this one| here)? (\S+)$/i);
     if (mApply) {
       const url = mApply[1];
       say(runId, `Starting the application flow for ${url}. I'll fill only profile facts, then show you an approval card before anything is submitted. Watch the Browser tab if you want.`);
@@ -368,7 +381,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       else say(runId, files.length ? files.map((f: any) => `- ${f.name}${f.webViewLink ? ` - ${f.webViewLink}` : ""}`).join("\n") : "Drive is empty.");
       return;
     }
-    const mUpload = t.match(/^upload (\S+) to drive( as doc)?$/i);
+    const mUpload = cmd.match(/^upload (\S+) to drive( as doc)?$/i);
     if (mUpload) {
       const f = await toolCall(runId, "drive.upload", { path: mUpload[1] }, async () => {
         const { uploadToDrive } = await import("./drive.js");
@@ -377,7 +390,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, `Uploaded: ${f.name}${f.webViewLink ? ` - ${f.webViewLink}` : ""}`);
       return;
     }
-    const mSync = t.match(/^sync (\S+) to drive$/i);
+    const mSync = cmd.match(/^sync (\S+) to drive$/i);
     if (mSync) {
       const r = await toolCall(runId, "drive.sync", { dir: mSync[1] }, async () => {
         const { syncFolder } = await import("./drive.js");
@@ -388,7 +401,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     }
 
     // ---- git engine ------------------------------------------------------
-    const mGitInit = t.match(/^(?:git init|new repo)(?:\s+(\S+))?$/i);
+    const mGitInit = cmd.match(/^(?:git init|new repo)(?:\s+(\S+))?$/i);
     if (mGitInit) {
       const name = (mGitInit[1] || "new-project").replace(/[^\w.-]/g, "-");
       const path = `${process.env.HOME || "."}/repos/${name}`;
@@ -399,7 +412,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, `Repo ${r.created ? "created" : "already existed"} at ${r.path}.`);
       return;
     }
-    const mCommit = t.match(/^commit (\S+)(?:\s+(.+))?$/i);
+    const mCommit = cmd.match(/^commit (\S+)(?:\s+(.+))?$/i);
     if (mCommit) {
       const path = mCommit[1];
       const msg = mCommit[2] || "agent: checkpoint";
@@ -410,7 +423,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, r ? `Committed: ${r}` : "Nothing to commit - working tree clean.");
       return;
     }
-    const mPush = t.match(/^push (\S+)(?:\s+(\S+))?(?:\s+(\S+))?$/i);
+    const mPush = cmd.match(/^push (\S+)(?:\s+(\S+))?(?:\s+(\S+))?$/i);
     if (mPush) {
       const path = mPush[1];
       const remote = mPush[2] || "origin";
@@ -422,7 +435,7 @@ export async function handleUserMessage(text: string): Promise<void> {
       say(runId, `Pushed ${branch} to ${remote}.`);
       return;
     }
-    const mGhRepo = t.match(/^(?:create|make) (?:a )?github repo (\S+)$/i);
+    const mGhRepo = cmd.match(/^(?:create|make) (?:a )?github repo (\S+)$/i);
     if (mGhRepo) {
       const url = await toolCall(runId, "github.create_repo", { name: mGhRepo[1] }, async () => {
         const { createGithubRepo } = await import("./git.js");
@@ -432,14 +445,14 @@ export async function handleUserMessage(text: string): Promise<void> {
       return;
     }
     if (lower.startsWith("git status ")) {
-      const path = t.slice("git status ".length).trim();
+      const path = cmd.slice("git status ".length).trim();
       const { statusSummary } = await import("./git.js");
       say(runId, await statusSummary(path));
       return;
     }
 
     // ---- signup engine -------------------------------------------------
-    const mSignup = t.match(/^sign ?up (?:on|at|for) (\S+)(?: with google)?$/i);
+    const mSignup = cmd.match(/^sign ?(?:me )?up (?:on|at|for) (\S+?)(?: with google)?$/i);
     if (mSignup) {
       const site = mSignup[1];
       const status = await toolCall(runId, "signup.google", { site }, async () => {
@@ -484,7 +497,7 @@ export async function handleUserMessage(text: string): Promise<void> {
     }
 
     // ---- email send with approval ------------------------------------------
-    const mOpen = t.match(/^(?:open|browse|go to)\s+(\S+)$/i);
+    const mOpen = cmd.match(/^(?:open|browse|go to)\s+(\S+)$/i);
     if (mOpen) {
       const url = await toolCall(runId, "browser.navigate", { url: mOpen[1] }, async () => {
         const br = await import("./browser.js");
